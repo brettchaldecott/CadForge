@@ -11,6 +11,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -44,12 +45,25 @@ def run_repl(
         session.load()
         renderer.render_info(f"Resumed session: {session_id}")
 
-    # Permission prompt callback — used by both sync and async paths.
-    # During async execution the agent task is suspended at an await point
-    # while the permission prompt runs in a thread via to_thread(), so
-    # stdin is free.
+    # Event used to coordinate stdin access between the escape listener
+    # and the permission prompt.  When SET the escape listener may read
+    # stdin; when CLEAR it must yield stdin and restore terminal settings.
+    stdin_free = threading.Event()
+    stdin_free.set()
+
+    # Permission prompt callback — runs in a thread via to_thread() during
+    # async execution.  Must pause the escape listener first so the two
+    # threads don't fight over stdin / terminal modes.
     def ask_callback(prompt: str) -> bool:
+        # Pause the escape listener so it stops reading stdin and
+        # restores the terminal to normal mode.
+        stdin_free.clear()
         try:
+            # Give the escape listener up to 0.3s to notice and yield.
+            import time
+            time.sleep(0.3)
+            _drain_stdin()
+
             renderer.render_tool_permission(prompt)
             try:
                 from prompt_toolkit import prompt as pt_prompt
@@ -61,6 +75,9 @@ def run_repl(
             return response in ("", "y", "yes")
         except (EOFError, KeyboardInterrupt):
             return False
+        finally:
+            _drain_stdin()
+            stdin_free.set()
 
     agent = Agent(
         project_root=project_root,
@@ -98,7 +115,7 @@ def run_repl(
     slash_commands = {f"/{s.name}": s for s in skills}
 
     try:
-        asyncio.run(_async_repl(agent, renderer, slash_commands, project_root, mode, prompt_bar))
+        asyncio.run(_async_repl(agent, renderer, slash_commands, project_root, mode, prompt_bar, stdin_free))
     except KeyboardInterrupt:
         pass
     finally:
@@ -118,6 +135,7 @@ async def _async_repl(
     project_root: Path,
     mode: InteractionMode,
     prompt_bar: PromptBar | None = None,
+    stdin_free: threading.Event | None = None,
 ) -> None:
     """Async REPL loop using prompt_toolkit's prompt_async."""
     try:
@@ -248,7 +266,7 @@ async def _async_repl(
             prompt_bar.activate()
 
         # Process through async agent with streaming
-        await _run_agent_with_events(agent, renderer, user_input, mode)
+        await _run_agent_with_events(agent, renderer, user_input, mode, stdin_free)
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +278,7 @@ async def _run_agent_with_events(
     renderer: ChatRenderer,
     user_input: str,
     mode: InteractionMode,
+    stdin_free: threading.Event | None = None,
 ) -> None:
     """Run agent as a cancellable task, consuming events for rendering.
 
@@ -278,7 +297,7 @@ async def _run_agent_with_events(
     )
 
     # --- Escape key listener ---
-    escape_task = asyncio.create_task(_wait_for_escape())
+    escape_task = asyncio.create_task(_wait_for_escape(stdin_free))
 
     # --- SIGINT handler (Ctrl+C) ---
     loop = asyncio.get_running_loop()
@@ -405,13 +424,19 @@ def _drain_stdin() -> None:
         pass
 
 
-async def _wait_for_escape() -> None:
+async def _wait_for_escape(stdin_free: threading.Event | None = None) -> None:
     """Wait for the Escape key to be pressed.
 
-    Reads stdin char-by-char in a thread executor. Returns when a
-    bare Escape (0x1b) is detected — i.e. ESC not followed immediately
-    by ``[`` (which would indicate a CSI escape sequence such as a
-    cursor-position report from the terminal).
+    Reads stdin using select() with short timeouts in a thread executor.
+    Returns when a bare Escape (0x1b) is detected — i.e. ESC not followed
+    immediately by ``[`` (which would indicate a CSI escape sequence such
+    as a cursor-position report from the terminal).
+
+    When *stdin_free* is provided and cleared by another component (e.g.
+    the permission prompt callback), the listener temporarily restores
+    the terminal and stops reading stdin until the event is set again.
+    This prevents the escape listener from fighting over stdin with
+    prompt_toolkit's CPR (cursor position request) handling.
 
     On platforms without termios (Windows) this awaits forever
     (Escape cancellation is not supported there).
@@ -429,29 +454,63 @@ async def _wait_for_escape() -> None:
 
     def _read_escape():
         old_settings = termios.tcgetattr(fd)
+        in_cbreak = False
         try:
-            tty.setcbreak(fd)
             while True:
-                ch = sys.stdin.read(1)
-                if ch == "\x1b":
+                # Yield stdin when another component needs it (e.g.
+                # the permission prompt).
+                if stdin_free is not None and not stdin_free.is_set():
+                    if in_cbreak:
+                        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                        in_cbreak = False
+                    # Block until stdin is free again (check every 0.2s
+                    # so we can be interrupted by thread cancellation).
+                    while not stdin_free.wait(timeout=0.2):
+                        pass
+                    # Re-read baseline settings — the permission prompt
+                    # may have changed them.
+                    old_settings = termios.tcgetattr(fd)
+                    tty.setcbreak(fd)
+                    in_cbreak = True
+                    continue
+
+                if not in_cbreak:
+                    tty.setcbreak(fd)
+                    in_cbreak = True
+
+                # Use select() with timeout so we periodically check
+                # stdin_free instead of blocking forever on read().
+                ready, _, _ = select.select([fd], [], [], 0.15)
+                if not ready:
+                    continue
+
+                data = os.read(fd, 1)
+                if not data:
+                    continue
+                ch = data[0]
+
+                if ch == 0x1b:
                     # Check if more data follows within 50ms.
                     # If so, this is an escape *sequence* (e.g. CSI),
                     # not a bare ESC keypress.
                     ready, _, _ = select.select([fd], [], [], 0.05)
                     if ready:
-                        next_ch = sys.stdin.read(1)
-                        if next_ch == "[":
+                        next_data = os.read(fd, 1)
+                        if next_data and next_data[0] == ord("["):
                             # CSI sequence — consume until final byte
                             while True:
-                                c = sys.stdin.read(1)
-                                if c.isalpha() or c == "~":
+                                c = os.read(fd, 1)
+                                if not c:
+                                    break
+                                if chr(c[0]).isalpha() or c[0] == ord("~"):
                                     break
                         # SS2/SS3 or other multi-byte — consumed, continue
                         continue
                     # No followup — bare Escape key
                     return
         finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            if in_cbreak:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     try:
         await asyncio.to_thread(_read_escape)
