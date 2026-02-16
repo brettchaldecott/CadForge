@@ -357,6 +357,9 @@ class AsyncAnthropicProvider:
     def __init__(self, auth_creds: Any = None):
         self._auth_creds = auth_creds
 
+    # Transient error types that warrant automatic retry
+    _RETRY_DELAYS = [1, 2, 4]  # seconds between retries
+
     async def stream(
         self,
         messages: list[dict[str, Any]],
@@ -368,96 +371,25 @@ class AsyncAnthropicProvider:
         """Stream an LLM response, pushing events to the queue.
 
         Returns the same normalized response dict as the sync call().
+        Automatically retries on transient API errors (500, 429, 529, network).
         """
+        try:
+            import anthropic as _anthropic
+
+            _retryable = (
+                _anthropic.InternalServerError,   # 500
+                _anthropic.RateLimitError,         # 429
+                _anthropic.APIConnectionError,     # network issues
+            )
+            _APIStatusError = _anthropic.APIStatusError
+        except ImportError:
+            _retryable = ()
+            _APIStatusError = None
+
         try:
             from cadforge.core.auth import create_async_anthropic_client
 
             client, self._auth_creds = create_async_anthropic_client(self._auth_creds)
-
-            content_blocks: list[dict[str, Any]] = []
-            usage_info: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
-
-            # Accumulators for the current content block
-            current_text = ""
-            current_tool: dict[str, Any] | None = None
-            current_tool_json = ""
-
-            async with client.messages.stream(
-                model=settings.model,
-                max_tokens=settings.max_tokens,
-                system=system_prompt,
-                tools=tools or [],
-                messages=messages,
-            ) as stream:
-                async for event in stream:
-                    etype = event.type
-
-                    if etype == "message_start":
-                        msg = getattr(event, "message", None)
-                        if msg and hasattr(msg, "usage"):
-                            usage_info["input_tokens"] = getattr(msg.usage, "input_tokens", 0)
-
-                    elif etype == "message_delta":
-                        delta_usage = getattr(event, "usage", None)
-                        if delta_usage:
-                            usage_info["output_tokens"] = getattr(
-                                delta_usage, "output_tokens", 0
-                            )
-
-                    elif etype == "content_block_start":
-                        cb = getattr(event, "content_block", None)
-                        if cb:
-                            block_type = getattr(cb, "type", "text")
-                            if block_type == "text":
-                                current_text = ""
-                            elif block_type == "tool_use":
-                                current_tool = {
-                                    "type": "tool_use",
-                                    "id": getattr(cb, "id", ""),
-                                    "name": getattr(cb, "name", ""),
-                                    "input": {},
-                                }
-                                current_tool_json = ""
-                                await event_queue.put(
-                                    AgentEvent.tool_use_start(
-                                        current_tool["name"], current_tool["id"]
-                                    )
-                                )
-
-                    elif etype == "content_block_delta":
-                        delta = getattr(event, "delta", None)
-                        if delta:
-                            delta_type = getattr(delta, "type", "")
-                            if delta_type == "text_delta":
-                                text = getattr(delta, "text", "")
-                                current_text += text
-                                await event_queue.put(AgentEvent.text_delta(text))
-                            elif delta_type == "input_json_delta":
-                                partial = getattr(delta, "partial_json", "")
-                                current_tool_json += partial
-
-                    elif etype == "content_block_stop":
-                        if current_tool is not None:
-                            # Finalize tool_use block
-                            try:
-                                current_tool["input"] = json.loads(current_tool_json) if current_tool_json else {}
-                            except json.JSONDecodeError:
-                                current_tool["input"] = {}
-                            content_blocks.append(current_tool)
-                            current_tool = None
-                            current_tool_json = ""
-                        else:
-                            # Finalize text block
-                            if current_text:
-                                content_blocks.append({"type": "text", "text": current_text})
-                                await event_queue.put(AgentEvent.text_done(current_text))
-                            current_text = ""
-
-            if not content_blocks:
-                content_blocks.append({"type": "text", "text": ""})
-
-            return {"content": content_blocks, "usage": usage_info}
-
         except ImportError:
             error_resp = {
                 "content": [
@@ -470,22 +402,144 @@ class AsyncAnthropicProvider:
             }
             await event_queue.put(AgentEvent.error(error_resp["content"][0]["text"]))
             return error_resp
-        except Exception as e:
-            error_msg = str(e)
-            if "api_key" in error_msg.lower() or "auth" in error_msg.lower():
-                error_msg = (
-                    f"Authentication error: {e}\n\n"
-                    "CadForge supports three auth methods:\n"
-                    "1. ANTHROPIC_API_KEY env var (API key billing)\n"
-                    "2. ANTHROPIC_AUTH_TOKEN env var (OAuth token)\n"
-                    "3. Automatic: Claude Code OAuth from macOS Keychain"
-                )
-            error_resp = {
-                "content": [{"type": "text", "text": f"API error: {error_msg}"}],
-                "usage": {"input_tokens": 0, "output_tokens": 0},
-            }
-            await event_queue.put(AgentEvent.error(f"API error: {error_msg}"))
-            return error_resp
+
+        last_error: Exception | None = None
+        was_streaming_text = False
+
+        for attempt in range(len(self._RETRY_DELAYS) + 1):
+            try:
+                content_blocks: list[dict[str, Any]] = []
+                usage_info: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
+
+                # Accumulators for the current content block
+                current_text = ""
+                current_tool: dict[str, Any] | None = None
+                current_tool_json = ""
+                was_streaming_text = False
+
+                async with client.messages.stream(
+                    model=settings.model,
+                    max_tokens=settings.max_tokens,
+                    system=system_prompt,
+                    tools=tools or [],
+                    messages=messages,
+                ) as stream:
+                    async for event in stream:
+                        etype = event.type
+
+                        if etype == "message_start":
+                            msg = getattr(event, "message", None)
+                            if msg and hasattr(msg, "usage"):
+                                usage_info["input_tokens"] = getattr(msg.usage, "input_tokens", 0)
+
+                        elif etype == "message_delta":
+                            delta_usage = getattr(event, "usage", None)
+                            if delta_usage:
+                                usage_info["output_tokens"] = getattr(
+                                    delta_usage, "output_tokens", 0
+                                )
+
+                        elif etype == "content_block_start":
+                            cb = getattr(event, "content_block", None)
+                            if cb:
+                                block_type = getattr(cb, "type", "text")
+                                if block_type == "text":
+                                    current_text = ""
+                                elif block_type == "tool_use":
+                                    current_tool = {
+                                        "type": "tool_use",
+                                        "id": getattr(cb, "id", ""),
+                                        "name": getattr(cb, "name", ""),
+                                        "input": {},
+                                    }
+                                    current_tool_json = ""
+                                    await event_queue.put(
+                                        AgentEvent.tool_use_start(
+                                            current_tool["name"], current_tool["id"]
+                                        )
+                                    )
+
+                        elif etype == "content_block_delta":
+                            delta = getattr(event, "delta", None)
+                            if delta:
+                                delta_type = getattr(delta, "type", "")
+                                if delta_type == "text_delta":
+                                    text = getattr(delta, "text", "")
+                                    current_text += text
+                                    was_streaming_text = True
+                                    await event_queue.put(AgentEvent.text_delta(text))
+                                elif delta_type == "input_json_delta":
+                                    partial = getattr(delta, "partial_json", "")
+                                    current_tool_json += partial
+
+                        elif etype == "content_block_stop":
+                            if current_tool is not None:
+                                # Finalize tool_use block
+                                try:
+                                    current_tool["input"] = json.loads(current_tool_json) if current_tool_json else {}
+                                except json.JSONDecodeError:
+                                    current_tool["input"] = {}
+                                content_blocks.append(current_tool)
+                                current_tool = None
+                                current_tool_json = ""
+                            else:
+                                # Finalize text block
+                                if current_text:
+                                    content_blocks.append({"type": "text", "text": current_text})
+                                    await event_queue.put(AgentEvent.text_done(current_text))
+                                    was_streaming_text = False
+                                current_text = ""
+
+                if not content_blocks:
+                    content_blocks.append({"type": "text", "text": ""})
+
+                return {"content": content_blocks, "usage": usage_info}
+
+            except Exception as e:
+                last_error = e
+
+                # Only retry transient errors (500, 429, 529, network)
+                is_retryable = _retryable and isinstance(e, _retryable)
+                if not is_retryable:
+                    # Also retry 529 Overloaded via status_code
+                    if _APIStatusError and isinstance(e, _APIStatusError):
+                        is_retryable = getattr(e, "status_code", 0) == 529
+                if not is_retryable:
+                    break
+
+                if attempt < len(self._RETRY_DELAYS):
+                    delay = self._RETRY_DELAYS[attempt]
+                    # Close the partial text line before status message
+                    if was_streaming_text:
+                        await event_queue.put(AgentEvent.text_done())
+                        was_streaming_text = False
+                    await event_queue.put(
+                        AgentEvent.status(
+                            f"API error, retrying ({attempt + 1}/{len(self._RETRY_DELAYS)})..."
+                        )
+                    )
+                    await asyncio.sleep(delay)
+                # else: fall through to error handling below
+
+        # All retries exhausted or non-retryable error
+        error_msg = str(last_error)
+        if "api_key" in error_msg.lower() or "auth" in error_msg.lower():
+            error_msg = (
+                f"Authentication error: {last_error}\n\n"
+                "CadForge supports three auth methods:\n"
+                "1. ANTHROPIC_API_KEY env var (API key billing)\n"
+                "2. ANTHROPIC_AUTH_TOKEN env var (OAuth token)\n"
+                "3. Automatic: Claude Code OAuth from macOS Keychain"
+            )
+        # Ensure error renders on its own line if we were mid-stream
+        if was_streaming_text:
+            await event_queue.put(AgentEvent.text_done())
+        error_resp = {
+            "content": [{"type": "text", "text": f"API error: {error_msg}"}],
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        }
+        await event_queue.put(AgentEvent.error(f"API error: {error_msg}"))
+        return error_resp
 
     def format_tool_results(
         self, tool_results: list[dict[str, Any]]

@@ -77,9 +77,10 @@ class ChatRenderer:
     def render_error(self, message: str) -> None:
         """Render an error message."""
         if self.use_rich:
+            self.console.print()  # blank line separator after streamed text
             self.console.print(f"[bold red]Error:[/bold red] {message}")
         else:
-            print(f"Error: {message}")
+            print(f"\nError: {message}")
 
     def render_info(self, message: str) -> None:
         """Render an informational message."""

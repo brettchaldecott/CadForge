@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -9,8 +10,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cadforge.config import CadForgeSettings
+from cadforge.core.events import AgentEvent, EventType
 from cadforge.core.llm import (
     AnthropicProvider,
+    AsyncAnthropicProvider,
     OllamaProvider,
     create_provider,
 )
@@ -403,3 +406,259 @@ class TestAgentUpdateProvider:
         agent.update_provider()
 
         assert isinstance(agent._provider, AnthropicProvider)
+
+
+# ---------------------------------------------------------------------------
+# Async retry tests for AsyncAnthropicProvider
+# ---------------------------------------------------------------------------
+
+anthropic = pytest.importorskip("anthropic", reason="anthropic SDK not installed")
+
+
+class _FakeStreamContext:
+    """Async context manager that yields events from a list, or raises."""
+
+    def __init__(self, events=None, error=None):
+        self._events = events or []
+        self._error = error
+
+    async def __aenter__(self):
+        if self._error:
+            raise self._error
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    def __aiter__(self):
+        return self._iter_events()
+
+    async def _iter_events(self):
+        for ev in self._events:
+            yield ev
+
+
+def _make_stream_events():
+    """Return a minimal set of streaming events for a successful response."""
+    return [
+        SimpleNamespace(type="message_start", message=SimpleNamespace(usage=SimpleNamespace(input_tokens=10))),
+        SimpleNamespace(type="content_block_start", content_block=SimpleNamespace(type="text")),
+        SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="text_delta", text="Hello")),
+        SimpleNamespace(type="content_block_stop"),
+        SimpleNamespace(type="message_delta", usage=SimpleNamespace(output_tokens=5)),
+    ]
+
+
+class TestAsyncAnthropicRetry:
+    """Tests for retry logic in AsyncAnthropicProvider.stream()."""
+
+    def _make_provider_and_queue(self):
+        return AsyncAnthropicProvider(), asyncio.Queue()
+
+    def _patch_client(self, stream_side_effect):
+        """Patch auth to return a mock client with given stream side_effect."""
+        mock_client = MagicMock()
+        mock_client.messages.stream = MagicMock(side_effect=stream_side_effect)
+
+        def fake_create(creds=None):
+            return mock_client, creds
+
+        return patch(
+            "cadforge.core.auth.create_async_anthropic_client",
+            side_effect=fake_create,
+        )
+
+    def _drain_queue(self, queue):
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        return events
+
+    def test_retry_on_internal_server_error(self):
+        """Should retry on 500 then succeed."""
+        error_500 = anthropic.InternalServerError(
+            message="Internal Server Error",
+            response=MagicMock(status_code=500, headers={}),
+            body=None,
+        )
+
+        call_count = 0
+
+        def stream_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _FakeStreamContext(error=error_500)
+            return _FakeStreamContext(events=_make_stream_events())
+
+        async def run():
+            provider, eq = self._make_provider_and_queue()
+            settings = CadForgeSettings()
+            with self._patch_client(stream_side_effect):
+                original_delays = AsyncAnthropicProvider._RETRY_DELAYS
+                AsyncAnthropicProvider._RETRY_DELAYS = [0, 0, 0]
+                try:
+                    result = await provider.stream(
+                        messages=[{"role": "user", "content": "hi"}],
+                        system_prompt="test",
+                        tools=[],
+                        settings=settings,
+                        event_queue=eq,
+                    )
+                finally:
+                    AsyncAnthropicProvider._RETRY_DELAYS = original_delays
+            return result, eq
+
+        result, eq = asyncio.run(run())
+        assert call_count == 2
+        assert result["content"][0]["text"] == "Hello"
+
+        events = self._drain_queue(eq)
+        status_events = [e for e in events if e.type == EventType.STATUS]
+        assert len(status_events) == 1
+        assert "retrying (1/3)" in status_events[0].data["message"]
+
+    def test_no_retry_on_auth_error(self):
+        """Auth errors should not be retried."""
+        auth_error = anthropic.AuthenticationError(
+            message="Invalid api_key",
+            response=MagicMock(status_code=401, headers={}),
+            body=None,
+        )
+
+        call_count = 0
+
+        def stream_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            return _FakeStreamContext(error=auth_error)
+
+        async def run():
+            provider, eq = self._make_provider_and_queue()
+            settings = CadForgeSettings()
+            with self._patch_client(stream_side_effect):
+                original_delays = AsyncAnthropicProvider._RETRY_DELAYS
+                AsyncAnthropicProvider._RETRY_DELAYS = [0, 0, 0]
+                try:
+                    result = await provider.stream(
+                        messages=[{"role": "user", "content": "hi"}],
+                        system_prompt="test",
+                        tools=[],
+                        settings=settings,
+                        event_queue=eq,
+                    )
+                finally:
+                    AsyncAnthropicProvider._RETRY_DELAYS = original_delays
+            return result
+
+        result = asyncio.run(run())
+        assert call_count == 1  # No retries
+        assert "API error" in result["content"][0]["text"]
+
+    def test_all_retries_exhausted(self):
+        """When all retries fail, should return error response."""
+        error_500 = anthropic.InternalServerError(
+            message="Internal Server Error",
+            response=MagicMock(status_code=500, headers={}),
+            body=None,
+        )
+
+        call_count = 0
+
+        def stream_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            return _FakeStreamContext(error=error_500)
+
+        async def run():
+            provider, eq = self._make_provider_and_queue()
+            settings = CadForgeSettings()
+            with self._patch_client(stream_side_effect):
+                original_delays = AsyncAnthropicProvider._RETRY_DELAYS
+                AsyncAnthropicProvider._RETRY_DELAYS = [0, 0, 0]
+                try:
+                    result = await provider.stream(
+                        messages=[{"role": "user", "content": "hi"}],
+                        system_prompt="test",
+                        tools=[],
+                        settings=settings,
+                        event_queue=eq,
+                    )
+                finally:
+                    AsyncAnthropicProvider._RETRY_DELAYS = original_delays
+            return result, eq
+
+        result, eq = asyncio.run(run())
+        # 1 initial + 3 retries = 4 attempts
+        assert call_count == 4
+        assert "API error" in result["content"][0]["text"]
+
+        events = self._drain_queue(eq)
+        status_events = [e for e in events if e.type == EventType.STATUS]
+        assert len(status_events) == 3
+
+    def test_text_done_pushed_before_error_when_mid_stream(self):
+        """If error occurs after text deltas, text_done should precede the error event."""
+        partial_events = [
+            SimpleNamespace(type="message_start", message=SimpleNamespace(usage=SimpleNamespace(input_tokens=5))),
+            SimpleNamespace(type="content_block_start", content_block=SimpleNamespace(type="text")),
+            SimpleNamespace(type="content_block_delta", delta=SimpleNamespace(type="text_delta", text="Partial")),
+        ]
+
+        class _MidStreamErrorContext:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            def __aiter__(self):
+                return self._iter()
+
+            async def _iter(self):
+                for ev in partial_events:
+                    yield ev
+                raise anthropic.InternalServerError(
+                    message="Server error",
+                    response=MagicMock(status_code=500, headers={}),
+                    body=None,
+                )
+
+        call_count = 0
+
+        def stream_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _MidStreamErrorContext()
+            return _FakeStreamContext(events=_make_stream_events())
+
+        async def run():
+            provider, eq = self._make_provider_and_queue()
+            settings = CadForgeSettings()
+            with self._patch_client(stream_side_effect):
+                original_delays = AsyncAnthropicProvider._RETRY_DELAYS
+                AsyncAnthropicProvider._RETRY_DELAYS = [0, 0, 0]
+                try:
+                    result = await provider.stream(
+                        messages=[{"role": "user", "content": "hi"}],
+                        system_prompt="test",
+                        tools=[],
+                        settings=settings,
+                        event_queue=eq,
+                    )
+                finally:
+                    AsyncAnthropicProvider._RETRY_DELAYS = original_delays
+            return result, eq
+
+        result, eq = asyncio.run(run())
+        assert call_count == 2
+        assert result["content"][0]["text"] == "Hello"
+
+        events = self._drain_queue(eq)
+        # Find the text_done with empty text (closing partial stream) and the status event
+        text_done_indices = [i for i, e in enumerate(events) if e.type == EventType.TEXT_DONE and e.data.get("text", "") == ""]
+        status_indices = [i for i, e in enumerate(events) if e.type == EventType.STATUS]
+        # text_done (closing partial) should appear before the retry status
+        assert text_done_indices and status_indices
+        assert text_done_indices[0] < status_indices[0]
