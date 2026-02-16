@@ -308,5 +308,13 @@ class Agent:
         return "Previous conversation covered: " + "; ".join(parts)
 
     def save_session(self) -> None:
-        """Save session to the index."""
+        """Save session to the index and export design log to vault."""
         self.session_index.update(self.session)
+
+        # Export session design log to vault for RAG retrieval
+        from cadforge.core.session_vault import save_session_to_vault
+        save_session_to_vault(
+            self.project_root,
+            self.session.session_id,
+            self.session.messages,
+        )

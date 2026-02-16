@@ -66,9 +66,23 @@ def get_step_output_dir(project_root: Path) -> Path:
     return d
 
 
+def get_scripts_output_dir(project_root: Path) -> Path:
+    """Get output/scripts/ directory, creating if needed."""
+    d = get_output_dir(project_root) / "scripts"
+    d.mkdir(exist_ok=True)
+    return d
+
+
 def get_vault_dir(project_root: Path) -> Path:
     """Get vault/ directory path."""
     return project_root / "vault"
+
+
+def get_session_vault_dir(project_root: Path) -> Path:
+    """Get vault/sessions/ directory, creating if needed."""
+    d = get_vault_dir(project_root) / "sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def get_lance_dir(project_root: Path) -> Path:
