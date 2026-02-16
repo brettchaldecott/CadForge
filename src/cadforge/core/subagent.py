@@ -29,8 +29,13 @@ class SubagentConfig:
             name="explore",
             agent_type="explore",
             model="claude-haiku-4-5-20251001",
-            tools=["ReadFile", "ListFiles", "SearchVault"],
-            system_prompt="You are an exploration agent. Search and read files to answer questions.",
+            tools=["ReadFile", "ListFiles", "SearchVault", "Bash"],
+            system_prompt=(
+                "You are an exploration agent for CadForge. "
+                "Search, read, and summarize information. "
+                "Provide concise, well-structured summaries of your findings. "
+                "Do NOT modify any files."
+            ),
         )
 
     @classmethod
@@ -39,7 +44,13 @@ class SubagentConfig:
             name="plan",
             agent_type="plan",
             tools=["ReadFile", "ListFiles", "SearchVault"],
-            system_prompt="You are a planning agent. Design implementation approaches.",
+            system_prompt=(
+                "You are a planning agent for CadForge. "
+                "Analyze requirements, read existing code and vault documents, "
+                "and design implementation approaches. "
+                "Return a clear, actionable plan with specific steps. "
+                "Do NOT modify any files."
+            ),
         )
 
     @classmethod
@@ -47,8 +58,14 @@ class SubagentConfig:
         return cls(
             name="cad",
             agent_type="cad",
-            tools=["ExecuteCadQuery", "AnalyzeMesh", "ExportModel"],
-            system_prompt="You are a CAD generation agent. Create 3D models using CadQuery.",
+            tools=["ExecuteCadQuery", "AnalyzeMesh", "ExportModel", "ReadFile", "SearchVault"],
+            system_prompt=(
+                "You are a CAD generation agent for CadForge. "
+                "Create 3D models using CadQuery. Assign the final workpiece to `result`. "
+                "Use `cq` as the CadQuery namespace and `np` for numpy. "
+                "You can read files and search the vault for reference material."
+            ),
+            max_iterations=20,
         )
 
 

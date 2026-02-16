@@ -220,6 +220,35 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                 "required": ["query"],
             },
         },
+        {
+            "name": "Task",
+            "description": (
+                "Delegate a focused task to a specialized sub-agent. "
+                "Use 'explore' for research and file reading, "
+                "'plan' for design planning, "
+                "'cad' for CAD model generation."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "agent_type": {
+                        "type": "string",
+                        "enum": ["explore", "plan", "cad"],
+                        "description": "Type of sub-agent to spawn",
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "The task for the sub-agent",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "Optional additional context",
+                        "default": "",
+                    },
+                },
+                "required": ["agent_type", "prompt"],
+            },
+        },
     ]
 
 

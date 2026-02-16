@@ -44,7 +44,7 @@ def build_system_prompt(
         "- Keep code clean and well-commented",
         "",
         "Available tools: ExecuteCadQuery, ReadFile, WriteFile, ListFiles,",
-        "SearchVault, AnalyzeMesh, ShowPreview, ExportModel, Bash, GetPrinter, SearchWeb",
+        "SearchVault, AnalyzeMesh, ShowPreview, ExportModel, Bash, GetPrinter, SearchWeb, Task",
     ]
 
     # Inject memory hierarchy
@@ -152,6 +152,7 @@ class Agent:
         from cadforge.tools.viewer_tool import handle_show_preview
         from cadforge.tools.cadquery_tool import handle_execute_cadquery
         from cadforge.tools.project_tool import handle_get_printer
+        from cadforge.tools.task_tool import handle_task
 
         pr = self.project_root
 
@@ -188,6 +189,9 @@ class Agent:
         )
         self.executor.register_handler(
             "SearchWeb", lambda inp: {"success": False, "error": "Not yet implemented"}
+        )
+        self.executor.register_handler(
+            "Task", lambda inp: handle_task(inp, self)
         )
 
     def update_provider(self) -> None:

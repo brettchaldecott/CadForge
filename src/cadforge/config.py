@@ -18,8 +18,11 @@ from cadforge.utils.paths import (
 
 DEFAULT_PERMISSIONS = {
     "deny": ["Bash(rm:*)", "Bash(sudo:*)", "WriteFile(**/.env)"],
-    "allow": ["ReadFile(*)", "SearchVault(*)", "AnalyzeMesh(*)", "GetPrinter(*)"],
-    "ask": ["ExecuteCadQuery(*)", "WriteFile(*)", "Bash(*)", "ExportModel(*)"],
+    "allow": [
+        "ReadFile(*)", "SearchVault(*)", "AnalyzeMesh(*)", "GetPrinter(*)",
+        "Task(explore)", "Task(plan)",
+    ],
+    "ask": ["ExecuteCadQuery(*)", "WriteFile(*)", "Bash(*)", "ExportModel(*)", "Task(cad)"],
 }
 
 DEFAULT_SETTINGS: dict[str, Any] = {

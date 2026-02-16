@@ -153,4 +153,6 @@ def _extract_permission_arg(tool_name: str, tool_input: dict[str, Any]) -> str:
         return tool_input.get("source", "*")
     elif tool_name == "ListFiles":
         return tool_input.get("pattern", "*")
+    elif tool_name == "Task":
+        return tool_input.get("agent_type", "*")
     return "*"

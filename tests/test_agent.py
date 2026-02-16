@@ -61,6 +61,7 @@ class TestAgent:
             "ReadFile", "WriteFile", "ListFiles", "Bash",
             "SearchVault", "AnalyzeMesh", "ShowPreview",
             "ExecuteCadQuery", "GetPrinter", "ExportModel", "SearchWeb",
+            "Task",
         ]
         for tool_name in expected_tools:
             assert tool_name in agent.executor._handlers, f"Missing handler: {tool_name}"

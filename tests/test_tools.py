@@ -25,7 +25,7 @@ class TestToolRegistry:
         expected = [
             "ExecuteCadQuery", "ReadFile", "WriteFile", "ListFiles",
             "SearchVault", "AnalyzeMesh", "ShowPreview", "ExportModel",
-            "Bash", "GetPrinter", "SearchWeb",
+            "Bash", "GetPrinter", "SearchWeb", "Task",
         ]
         for name in expected:
             assert name in names, f"Missing tool: {name}"
@@ -64,6 +64,10 @@ class TestExtractPermissionArg:
     def test_cadquery(self):
         arg = _extract_permission_arg("ExecuteCadQuery", {"output_name": "cube"})
         assert arg == "cube"
+
+    def test_task_tool(self):
+        arg = _extract_permission_arg("Task", {"agent_type": "explore"})
+        assert arg == "explore"
 
     def test_unknown_tool(self):
         arg = _extract_permission_arg("Unknown", {})
