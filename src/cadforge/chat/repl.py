@@ -7,6 +7,7 @@ Ctrl+C and Escape cancel the running agent and return to the prompt.
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import subprocess
 import sys
@@ -258,6 +259,11 @@ async def _run_agent_with_events(
     """
     event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
 
+    # Drain any pending stdin data (e.g. CPR responses from prompt_toolkit)
+    # before starting the escape listener, so stale escape sequences are
+    # not mistaken for a bare Escape keypress.
+    _drain_stdin()
+
     agent_task = asyncio.create_task(
         agent.process_message_async(user_input, mode=mode.value, event_queue=event_queue)
     )
@@ -360,14 +366,45 @@ async def _safe_queue_get(
         return None
 
 
+def _drain_stdin() -> None:
+    """Drain any pending data on stdin (non-blocking).
+
+    This flushes stale escape sequences (e.g. CPR responses from
+    prompt_toolkit) so the escape listener doesn't misinterpret them.
+    """
+    try:
+        import select
+        import termios
+        import tty
+    except ImportError:
+        return
+
+    fd = sys.stdin.fileno()
+    try:
+        old_settings = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+        try:
+            while select.select([fd], [], [], 0)[0]:
+                os.read(fd, 1024)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    except (OSError, termios.error):
+        pass
+
+
 async def _wait_for_escape() -> None:
     """Wait for the Escape key to be pressed.
 
-    Reads stdin char-by-char in a thread executor. Returns when
-    Escape (0x1b) is detected. On platforms without termios (Windows)
-    this awaits forever (Escape cancellation is not supported there).
+    Reads stdin char-by-char in a thread executor. Returns when a
+    bare Escape (0x1b) is detected — i.e. ESC not followed immediately
+    by ``[`` (which would indicate a CSI escape sequence such as a
+    cursor-position report from the terminal).
+
+    On platforms without termios (Windows) this awaits forever
+    (Escape cancellation is not supported there).
     """
     try:
+        import select
         import termios
         import tty
     except ImportError:
@@ -384,6 +421,21 @@ async def _wait_for_escape() -> None:
             while True:
                 ch = sys.stdin.read(1)
                 if ch == "\x1b":
+                    # Check if more data follows within 50ms.
+                    # If so, this is an escape *sequence* (e.g. CSI),
+                    # not a bare ESC keypress.
+                    ready, _, _ = select.select([fd], [], [], 0.05)
+                    if ready:
+                        next_ch = sys.stdin.read(1)
+                        if next_ch == "[":
+                            # CSI sequence — consume until final byte
+                            while True:
+                                c = sys.stdin.read(1)
+                                if c.isalpha() or c == "~":
+                                    break
+                        # SS2/SS3 or other multi-byte — consumed, continue
+                        continue
+                    # No followup — bare Escape key
                     return
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
