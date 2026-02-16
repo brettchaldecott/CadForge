@@ -16,15 +16,26 @@ dependencies = [
     "rich>=13.0.0",
     "pyyaml>=6.0",
     "numpy>=1.24.0",
-    "cadquery>=2.4.0",
-    "trimesh>=3.20.0",
-    "lancedb>=0.4.0",
-    "sentence-transformers>=2.2.0",
-    "pyvista>=0.43.0",
-    "pyarrow>=14.0.0",
 ]
 
 [project.optional-dependencies]
+cad = [
+    "cadquery>=2.4.0",
+]
+mesh = [
+    "trimesh>=3.20.0",
+]
+rag = [
+    "lancedb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+    "pyarrow>=14.0.0",
+]
+viewer = [
+    "pyvista>=0.43.0",
+]
+all = [
+    "cadforge[cad,mesh,rag,viewer]",
+]
 dev = [
     "pytest>=7.0",
     "pytest-mock>=3.10",

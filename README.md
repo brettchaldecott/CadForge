@@ -9,7 +9,18 @@ AI-powered CLI CAD tool for 3D printing. Uses CadQuery for parametric modeling, 
 cd /path/to/CadForge
 python3 -m venv venv
 source venv/bin/activate
+
+# Core install (agent + chat + vault text search)
 pip install -e ".[dev]"
+
+# With all optional backends (CadQuery, trimesh, LanceDB, PyVista)
+pip install -e ".[all,dev]"
+
+# Or pick extras individually
+pip install -e ".[cad]"       # CadQuery modeling
+pip install -e ".[mesh]"      # trimesh analysis
+pip install -e ".[rag]"       # LanceDB + sentence-transformers
+pip install -e ".[viewer]"    # PyVista 3D viewer
 
 # Set your API key
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -23,6 +34,10 @@ cadforge index
 # Start chatting
 cadforge chat
 ```
+
+> **Note:** CadQuery requires `cadquery-ocp` (OpenCascade bindings) which may not
+> have wheels for all Python versions. If `pip install -e ".[cad]"` fails, try
+> Python 3.11 or 3.12, or use `conda install -c cadquery cadquery`.
 
 ## Commands
 
