@@ -6,6 +6,7 @@ Commands:
   index     Index the knowledge vault
   view      Preview an STL file
   resume    Resume the last session
+  config    View and update project settings
 """
 
 from __future__ import annotations
@@ -43,6 +44,14 @@ def main(argv: list[str] | None = None) -> int:
     # resume
     subparsers.add_parser("resume", help="Resume the last session")
 
+    # config
+    config_parser = subparsers.add_parser("config", help="View and update project settings")
+    config_parser.add_argument(
+        "action", choices=["show", "get", "set"], help="Action to perform"
+    )
+    config_parser.add_argument("key", nargs="?", help="Setting key (for get/set)")
+    config_parser.add_argument("value", nargs="?", help="Setting value (for set)")
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -61,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_view(args)
         elif args.command == "resume":
             return cmd_resume(args)
+        elif args.command == "config":
+            return cmd_config(args)
         else:
             parser.print_help()
             return 1
@@ -200,6 +211,98 @@ def cmd_resume(args: argparse.Namespace) -> int:
     print(f"Resuming session: {latest.session_id}")
     run_repl(project_root, session_id=latest.session_id)
     return 0
+
+
+ALLOWED_CONFIG_KEYS = {"provider", "model", "base_url", "max_tokens", "temperature", "printer"}
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    """View and update project settings."""
+    from cadforge.utils.paths import find_project_root, get_project_settings_path
+    from cadforge.config import (
+        CadForgeSettings,
+        load_json_file,
+        load_settings,
+        validate_settings,
+    )
+
+    project_root = find_project_root()
+    if project_root is None:
+        print("No CadForge project found.", file=sys.stderr)
+        return 1
+
+    action = args.action
+
+    if action == "show":
+        settings = load_settings(project_root)
+        print(json.dumps(settings.to_dict(), indent=2))
+        return 0
+
+    if action == "get":
+        if not args.key:
+            print("Usage: cadforge config get <key>", file=sys.stderr)
+            return 1
+        if args.key not in ALLOWED_CONFIG_KEYS:
+            print(
+                f"Unknown key: {args.key}. "
+                f"Allowed keys: {', '.join(sorted(ALLOWED_CONFIG_KEYS))}",
+                file=sys.stderr,
+            )
+            return 1
+        settings = load_settings(project_root)
+        value = getattr(settings, args.key)
+        print(value if value is not None else "")
+        return 0
+
+    if action == "set":
+        if not args.key or args.value is None:
+            print("Usage: cadforge config set <key> <value>", file=sys.stderr)
+            return 1
+        if args.key not in ALLOWED_CONFIG_KEYS:
+            print(
+                f"Unknown key: {args.key}. "
+                f"Allowed keys: {', '.join(sorted(ALLOWED_CONFIG_KEYS))}",
+                file=sys.stderr,
+            )
+            return 1
+
+        settings_path = get_project_settings_path(project_root)
+        data = load_json_file(settings_path)
+
+        # Parse typed values
+        value: str | int | float | None = args.value
+        if args.key == "max_tokens":
+            try:
+                value = int(args.value)
+            except ValueError:
+                print("max_tokens must be an integer", file=sys.stderr)
+                return 1
+        elif args.key == "temperature":
+            try:
+                value = float(args.value)
+            except ValueError:
+                print("temperature must be a number", file=sys.stderr)
+                return 1
+
+        data[args.key] = value
+
+        # Validate by building a settings object from merged data
+        test_settings = load_settings(project_root)
+        setattr(test_settings, args.key, value)
+        errors = validate_settings(test_settings)
+        if errors:
+            for err in errors:
+                print(f"Validation error: {err}", file=sys.stderr)
+            return 1
+
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8"
+        )
+        print(f"{args.key} = {value}")
+        return 0
+
+    return 1
 
 
 if __name__ == "__main__":

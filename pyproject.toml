@@ -28,6 +28,9 @@ cad = [
 mesh = [
     "trimesh>=3.20.0",
 ]
+ollama = [
+    "openai>=1.0.0",
+]
 rag = [
     "lancedb>=0.4.0",
     "sentence-transformers>=2.2.0",

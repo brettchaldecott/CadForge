@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from cadforge.chat.renderer import ChatRenderer
-from cadforge.config import load_settings
+from cadforge.config import load_settings, save_settings
 from cadforge.core.agent import Agent
 from cadforge.core.session import Session
 from cadforge.skills.loader import discover_skills, get_skill_by_name
+from cadforge.utils.paths import get_project_settings_path
 
 
 def run_repl(
@@ -50,20 +51,24 @@ def run_repl(
     renderer.render_welcome()
 
     # Show auth status
-    auth_labels = {
-        "api_key": "API key",
-        "env_token": "ANTHROPIC_AUTH_TOKEN",
-        "claude_code": "Claude Code OAuth (subscription)",
-        "none": "No credentials found",
-    }
-    auth_label = auth_labels.get(agent._auth_creds.source, agent._auth_creds.source)
-    if agent._auth_creds.is_valid:
-        renderer.render_info(f"Auth: {auth_label}")
+    if settings.provider == "ollama":
+        base_url = settings.base_url or "http://localhost:11434/v1"
+        renderer.render_info(f"Provider: Ollama (local) — {settings.model} @ {base_url}")
     else:
-        renderer.render_error(
-            "No authentication configured. Set ANTHROPIC_API_KEY, "
-            "ANTHROPIC_AUTH_TOKEN, or log in to Claude Code."
-        )
+        auth_labels = {
+            "api_key": "API key",
+            "env_token": "ANTHROPIC_AUTH_TOKEN",
+            "claude_code": "Claude Code OAuth (subscription)",
+            "none": "No credentials found",
+        }
+        auth_label = auth_labels.get(agent._auth_creds.source, agent._auth_creds.source)
+        if agent._auth_creds.is_valid:
+            renderer.render_info(f"Auth: {auth_label}")
+        else:
+            renderer.render_error(
+                "No authentication configured. Set ANTHROPIC_API_KEY, "
+                "ANTHROPIC_AUTH_TOKEN, or log in to Claude Code."
+            )
 
     # Discover available skills
     skills = discover_skills(project_root)
@@ -119,6 +124,9 @@ def _repl_loop(
         elif user_input == "/sessions":
             _show_sessions(renderer, agent)
             continue
+        elif user_input.startswith("/provider"):
+            _handle_provider(user_input, agent, renderer, project_root)
+            continue
 
         # Handle slash commands (skills)
         parts = user_input.split(None, 1)
@@ -138,6 +146,7 @@ def _show_help(renderer: ChatRenderer, slash_commands: dict) -> None:
     help_text = (
         "**Commands:**\n"
         "- `/help` — Show this help\n"
+        "- `/provider` — Show or switch LLM provider\n"
         "- `/skills` — List available skills\n"
         "- `/sessions` — List recent sessions\n"
         "- `/quit` — Exit CadForge\n"
@@ -167,3 +176,62 @@ def _show_sessions(renderer: ChatRenderer, agent: Agent) -> None:
         return
     for s in sessions:
         renderer.render_info(f"  {s.session_id}: {s.summary} ({s.message_count} msgs)")
+
+
+def _handle_provider(
+    user_input: str,
+    agent: Agent,
+    renderer: ChatRenderer,
+    project_root: Path,
+) -> None:
+    """Handle the /provider command."""
+    parts = user_input.split()
+
+    # /provider — show current
+    if len(parts) == 1:
+        base_url = agent.settings.base_url or ""
+        if agent.settings.provider == "ollama":
+            base_url = agent.settings.base_url or "http://localhost:11434/v1"
+            renderer.render_info(
+                f"Provider: {agent.settings.provider}  Model: {agent.settings.model}  URL: {base_url}"
+            )
+        else:
+            renderer.render_info(
+                f"Provider: {agent.settings.provider}  Model: {agent.settings.model}"
+            )
+        return
+
+    new_provider = parts[1]
+    if new_provider not in ("anthropic", "ollama"):
+        renderer.render_error(f"Unknown provider: {new_provider}. Use 'anthropic' or 'ollama'.")
+        return
+
+    new_model = parts[2] if len(parts) >= 3 else None
+
+    agent.settings.provider = new_provider
+    if new_model:
+        agent.settings.model = new_model
+
+    # Set sensible defaults when switching providers
+    if new_provider == "ollama":
+        if not new_model:
+            agent.settings.model = "qwen2.5-coder:14b"
+        if not agent.settings.base_url:
+            agent.settings.base_url = "http://localhost:11434/v1"
+    elif new_provider == "anthropic":
+        if not new_model:
+            agent.settings.model = "claude-sonnet-4-5-20250929"
+        agent.settings.base_url = None
+
+    agent.update_provider()
+
+    # Persist to project settings
+    settings_path = get_project_settings_path(project_root)
+    save_settings(agent.settings, settings_path)
+
+    if new_provider == "ollama":
+        renderer.render_info(
+            f"Switched to {new_provider} — {agent.settings.model} @ {agent.settings.base_url}"
+        )
+    else:
+        renderer.render_info(f"Switched to {new_provider} — {agent.settings.model}")

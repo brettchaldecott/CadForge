@@ -25,10 +25,12 @@ DEFAULT_PERMISSIONS = {
 DEFAULT_SETTINGS: dict[str, Any] = {
     "permissions": DEFAULT_PERMISSIONS,
     "hooks": [],
+    "provider": "anthropic",
     "model": "claude-sonnet-4-5-20250929",
     "max_tokens": 8192,
     "temperature": 0.0,
     "printer": None,
+    "base_url": None,
 }
 
 
@@ -38,19 +40,23 @@ class CadForgeSettings:
 
     permissions: dict[str, list[str]] = field(default_factory=lambda: dict(DEFAULT_PERMISSIONS))
     hooks: list[dict[str, Any]] = field(default_factory=list)
+    provider: str = "anthropic"
     model: str = "claude-sonnet-4-5-20250929"
     max_tokens: int = 8192
     temperature: float = 0.0
     printer: str | None = None
+    base_url: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "permissions": self.permissions,
             "hooks": self.hooks,
+            "provider": self.provider,
             "model": self.model,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "printer": self.printer,
+            "base_url": self.base_url,
         }
 
 
@@ -103,10 +109,12 @@ def load_settings(project_root: Path | None = None) -> CadForgeSettings:
     return CadForgeSettings(
         permissions=merged.get("permissions", DEFAULT_PERMISSIONS),
         hooks=merged.get("hooks", []),
+        provider=merged.get("provider", "anthropic"),
         model=merged.get("model", "claude-sonnet-4-5-20250929"),
         max_tokens=merged.get("max_tokens", 8192),
         temperature=merged.get("temperature", 0.0),
         printer=merged.get("printer"),
+        base_url=merged.get("base_url"),
     )
 
 
@@ -134,6 +142,12 @@ def validate_settings(settings: CadForgeSettings) -> list[str]:
 
     if not isinstance(settings.hooks, list):
         errors.append("hooks must be a list")
+
+    if settings.provider not in ("anthropic", "ollama"):
+        errors.append("provider must be 'anthropic' or 'ollama'")
+
+    if settings.base_url is not None and not isinstance(settings.base_url, str):
+        errors.append("base_url must be a string or null")
 
     if not isinstance(settings.max_tokens, int) or settings.max_tokens < 1:
         errors.append("max_tokens must be a positive integer")

@@ -18,6 +18,7 @@ from cadforge.core.context import (
     estimate_messages_tokens,
 )
 from cadforge.core.hooks import HookConfig, HookEvent, load_hook_configs, run_hooks
+from cadforge.core.llm import LLMProvider, create_provider
 from cadforge.core.memory import load_memory
 from cadforge.core.session import Session, SessionIndex
 from cadforge.tools.executor import ToolExecutor
@@ -106,9 +107,15 @@ class Agent:
         self.ask_callback = ask_callback or (lambda _: True)
         self.output_callback = output_callback or print
 
-        # Resolve authentication
-        from cadforge.core.auth import resolve_auth
-        self._auth_creds = resolve_auth()
+        # Resolve authentication and create provider
+        if self.settings.provider == "ollama":
+            from cadforge.core.auth import AuthCredentials
+            self._auth_creds = AuthCredentials(source="ollama")
+        else:
+            from cadforge.core.auth import resolve_auth
+            self._auth_creds = resolve_auth()
+
+        self._provider: LLMProvider = create_provider(self.settings, self._auth_creds)
 
         # Build system prompt
         self.system_prompt = build_system_prompt(project_root, self.settings)
@@ -183,6 +190,16 @@ class Agent:
             "SearchWeb", lambda inp: {"success": False, "error": "Not yet implemented"}
         )
 
+    def update_provider(self) -> None:
+        """Hot-swap the LLM provider based on current settings."""
+        if self.settings.provider == "ollama":
+            from cadforge.core.auth import AuthCredentials
+            self._auth_creds = AuthCredentials(source="ollama")
+        else:
+            from cadforge.core.auth import resolve_auth
+            self._auth_creds = resolve_auth()
+        self._provider = create_provider(self.settings, self._auth_creds)
+
     def process_message(self, user_input: str) -> str:
         """Process a user message through the agentic loop.
 
@@ -203,9 +220,12 @@ class Agent:
             self.context_state.compaction_count += 1
 
         # Agentic loop
+        tools = get_tool_definitions()
         max_iterations = 20
         for _ in range(max_iterations):
-            response = self._call_api(messages)
+            response = self._provider.call(
+                messages, self.system_prompt, tools, self.settings,
+            )
 
             if response is None:
                 error_msg = "Failed to get response from API"
@@ -234,7 +254,7 @@ class Agent:
                 usage=response.get("usage"),
             )
 
-            # Execute tools and add results
+            # Execute tools and collect results in Anthropic format
             tool_results = []
             for tool_use in tool_uses:
                 result = self.executor.execute(
@@ -252,48 +272,6 @@ class Agent:
             messages = self.session.get_api_messages()
 
         return "Maximum iterations reached. Please try a simpler request."
-
-    def _call_api(self, messages: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """Call the Anthropic API."""
-        try:
-            from cadforge.core.auth import create_anthropic_client
-            client, self._auth_creds = create_anthropic_client(self._auth_creds)
-            response = client.messages.create(
-                model=self.settings.model,
-                max_tokens=self.settings.max_tokens,
-                system=self.system_prompt,
-                tools=get_tool_definitions(),
-                messages=messages,
-            )
-            return {
-                "content": [
-                    block.model_dump() if hasattr(block, "model_dump") else block
-                    for block in response.content
-                ],
-                "usage": {
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                },
-            }
-        except ImportError:
-            return {
-                "content": [{"type": "text", "text": "Anthropic SDK not installed. Install with: pip install anthropic"}],
-                "usage": {"input_tokens": 0, "output_tokens": 0},
-            }
-        except Exception as e:
-            error_msg = str(e)
-            if "api_key" in error_msg.lower() or "auth" in error_msg.lower():
-                error_msg = (
-                    f"Authentication error: {e}\n\n"
-                    "CadForge supports three auth methods:\n"
-                    "1. ANTHROPIC_API_KEY env var (API key billing)\n"
-                    "2. ANTHROPIC_AUTH_TOKEN env var (OAuth token)\n"
-                    "3. Automatic: Claude Code OAuth from macOS Keychain"
-                )
-            return {
-                "content": [{"type": "text", "text": f"API error: {error_msg}"}],
-                "usage": {"input_tokens": 0, "output_tokens": 0},
-            }
 
     def _generate_summary(self, messages: list[dict[str, Any]]) -> str:
         """Generate a conversation summary for context compaction."""
