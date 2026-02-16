@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from cadforge.chat.modes import InteractionMode
+from cadforge.chat.modes import InteractionMode, has_proceed_intent
 from cadforge.chat.prompt_bar import PromptBar
 from cadforge.chat.renderer import ChatRenderer
 from cadforge.config import load_settings, save_settings
@@ -173,6 +173,7 @@ async def _async_repl(
 
     while True:
         try:
+            _drain_stdin()  # Flush stale escape sequences before prompting
             raw_input = (await get_input()).strip()
         except (EOFError, KeyboardInterrupt):
             print()
@@ -233,6 +234,14 @@ async def _async_repl(
             skill = slash_commands[cmd]
             skill_arg = parts[1] if len(parts) > 1 else ""
             user_input = f"{skill.prompt}\n\nUser request: {skill_arg}"
+
+        # Auto-switch from plan to agent mode when user wants to execute
+        if mode == InteractionMode.PLAN and has_proceed_intent(user_input):
+            mode = InteractionMode.AGENT
+            if prompt_bar:
+                prompt_bar.set_mode(mode.display_name, mode.color)
+            renderer.render_mode_change(mode.display_name, mode.color)
+            renderer.render_info("Switched to AGENT mode to execute the plan.")
 
         # Activate prompt bar before agent runs
         if prompt_bar:
@@ -353,6 +362,10 @@ async def _run_agent_with_events(
                 pass
         if streaming_started:
             renderer.render_streaming_end()
+        # Drain any stale CPR responses or escape sequences left in stdin
+        # after cancellation, so prompt_toolkit doesn't warn about missing
+        # CPR support on the next prompt.
+        _drain_stdin()
 
 
 async def _safe_queue_get(

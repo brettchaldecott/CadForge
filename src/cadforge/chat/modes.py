@@ -61,6 +61,18 @@ def get_mode_tools(mode: InteractionMode) -> frozenset[str] | None:
     return frozenset()
 
 
+PROCEED_PHRASES: frozenset[str] = frozenset({
+    "proceed", "go ahead", "do it", "execute", "implement",
+    "build it", "make it", "let's go", "start", "run it",
+})
+
+
+def has_proceed_intent(user_input: str) -> bool:
+    """Return True if the user input signals intent to execute a plan."""
+    lower = user_input.lower().strip()
+    return any(phrase in lower for phrase in PROCEED_PHRASES)
+
+
 def get_plan_mode_permissions() -> dict[str, list[str]]:
     """Return permissions dict that denies write tools and allows read tools."""
     return {

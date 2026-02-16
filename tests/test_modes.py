@@ -6,9 +6,11 @@ import pytest
 
 from cadforge.chat.modes import (
     PLAN_MODE_TOOLS,
+    PROCEED_PHRASES,
     InteractionMode,
     get_mode_tools,
     get_plan_mode_permissions,
+    has_proceed_intent,
 )
 
 
@@ -110,3 +112,58 @@ class TestPlanModePermissions:
     def test_ask_is_empty(self):
         perms = get_plan_mode_permissions()
         assert perms["ask"] == []
+
+
+class TestHasProceedIntent:
+    """Tests for proceed intent detection in plan mode."""
+
+    def test_exact_proceed(self):
+        assert has_proceed_intent("proceed") is True
+
+    def test_please_proceed(self):
+        assert has_proceed_intent("please proceed") is True
+
+    def test_go_ahead(self):
+        assert has_proceed_intent("go ahead") is True
+
+    def test_yes_go_ahead(self):
+        assert has_proceed_intent("yes, go ahead") is True
+
+    def test_do_it(self):
+        assert has_proceed_intent("do it") is True
+
+    def test_execute(self):
+        assert has_proceed_intent("execute") is True
+
+    def test_implement(self):
+        assert has_proceed_intent("implement") is True
+
+    def test_build_it(self):
+        assert has_proceed_intent("build it") is True
+
+    def test_lets_go(self):
+        assert has_proceed_intent("let's go") is True
+
+    def test_case_insensitive(self):
+        assert has_proceed_intent("PROCEED") is True
+        assert has_proceed_intent("Go Ahead") is True
+        assert has_proceed_intent("Please EXECUTE the plan") is True
+
+    def test_with_whitespace(self):
+        assert has_proceed_intent("  proceed  ") is True
+
+    def test_normal_plan_question_no_match(self):
+        assert has_proceed_intent("how should I design this?") is False
+
+    def test_empty_string(self):
+        assert has_proceed_intent("") is False
+
+    def test_unrelated_input(self):
+        assert has_proceed_intent("what files are in this project?") is False
+
+    def test_plan_request(self):
+        assert has_proceed_intent("plan the architecture for a REST API") is False
+
+    def test_all_phrases_detected(self):
+        for phrase in PROCEED_PHRASES:
+            assert has_proceed_intent(phrase) is True, f"Failed for: {phrase}"

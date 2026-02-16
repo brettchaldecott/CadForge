@@ -265,7 +265,9 @@ class Agent:
         if current_mode == InteractionMode.PLAN:
             system_prompt += (
                 "\n\nYou are in PLAN mode. Read-only. "
-                "Provide a detailed plan, do NOT modify files."
+                "Provide a detailed plan, do NOT modify files or execute code. "
+                "If the user asks you to proceed or execute, tell them to type "
+                "/agent or press Shift+Tab to switch to agent mode."
             )
         elif current_mode == InteractionMode.ASK:
             system_prompt += (
@@ -386,7 +388,9 @@ class Agent:
         if current_mode == InteractionMode.PLAN:
             system_prompt += (
                 "\n\nYou are in PLAN mode. Read-only. "
-                "Provide a detailed plan, do NOT modify files."
+                "Provide a detailed plan, do NOT modify files or execute code. "
+                "If the user asks you to proceed or execute, tell them to type "
+                "/agent or press Shift+Tab to switch to agent mode."
             )
         elif current_mode == InteractionMode.ASK:
             system_prompt += (
