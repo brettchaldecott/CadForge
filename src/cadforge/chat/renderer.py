@@ -91,17 +91,41 @@ class ChatRenderer:
         else:
             print(code)
 
-    def render_welcome(self) -> None:
-        """Render the welcome message."""
+    def render_tool_permission(self, prompt: str) -> None:
+        """Render a styled tool permission request."""
+        if self.use_rich:
+            self.console.print(
+                Panel(
+                    prompt,
+                    title="Permission Required",
+                    border_style="yellow",
+                    expand=False,
+                )
+            )
+        else:
+            print(f"[Permission] {prompt}")
+
+    def render_mode_change(self, mode_name: str, color: str) -> None:
+        """Render a mode change notification."""
+        if self.use_rich:
+            self.console.print(
+                f"[bold {color}]Mode: {mode_name}[/bold {color}]"
+            )
+        else:
+            print(f"Mode: {mode_name}")
+
+    def render_welcome(self, mode_name: str = "AGENT", mode_color: str = "green") -> None:
+        """Render the welcome message with current mode."""
         if self.use_rich:
             self.console.print(
                 Panel(
                     "[bold]CadForge[/bold] — AI-powered CAD for 3D printing\n"
-                    "Type your request or use /help for commands.",
+                    f"Mode: [{mode_color}]{mode_name}[/{mode_color}]  "
+                    "Shift+Tab: cycle modes  /help: commands",
                     border_style="cyan",
                 )
             )
         else:
-            print("CadForge — AI-powered CAD for 3D printing")
-            print("Type your request or use /help for commands.")
+            print(f"CadForge — AI-powered CAD for 3D printing  [Mode: {mode_name}]")
+            print("Shift+Tab: cycle modes  /help: commands")
             print()

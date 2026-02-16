@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
+from cadforge.chat.modes import InteractionMode
 from cadforge.chat.renderer import ChatRenderer
 from cadforge.config import load_settings, save_settings
 from cadforge.core.agent import Agent
@@ -32,10 +34,17 @@ def run_repl(
         session.load()
         renderer.render_info(f"Resumed session: {session_id}")
 
-    # Set up agent
+    # Set up agent with styled permission prompt
     def ask_callback(prompt: str) -> bool:
         try:
-            response = input(prompt).strip().lower()
+            renderer.render_tool_permission(prompt)
+            try:
+                from prompt_toolkit import prompt as pt_prompt
+                from prompt_toolkit.formatted_text import HTML
+
+                response = pt_prompt(HTML('<style fg="yellow">[Y/n] </style>')).strip().lower()
+            except ImportError:
+                response = input("[Y/n] ").strip().lower()
             return response in ("", "y", "yes")
         except (EOFError, KeyboardInterrupt):
             return False
@@ -48,7 +57,8 @@ def run_repl(
         output_callback=lambda text: renderer.render_assistant_message(text),
     )
 
-    renderer.render_welcome()
+    mode = InteractionMode.AGENT
+    renderer.render_welcome(mode.display_name, mode.color)
 
     # Show auth status
     if settings.provider == "ollama":
@@ -75,7 +85,7 @@ def run_repl(
     slash_commands = {f"/{s.name}": s for s in skills}
 
     try:
-        _repl_loop(agent, renderer, slash_commands, project_root)
+        _repl_loop(agent, renderer, slash_commands, project_root, mode)
     except KeyboardInterrupt:
         pass
     finally:
@@ -88,35 +98,71 @@ def _repl_loop(
     renderer: ChatRenderer,
     slash_commands: dict,
     project_root: Path,
+    mode: InteractionMode,
 ) -> None:
     """Main REPL input loop."""
     try:
         from prompt_toolkit import PromptSession
+        from prompt_toolkit.formatted_text import HTML
         from prompt_toolkit.history import FileHistory
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.keys import Keys
+
+        has_prompt_toolkit = True
+    except ImportError:
+        has_prompt_toolkit = False
+
+    if has_prompt_toolkit:
+        bindings = KeyBindings()
+
+        @bindings.add(Keys.BackTab)  # Shift+Tab
+        def _cycle_mode(event):
+            nonlocal mode
+            mode = mode.next()
+            renderer.render_mode_change(mode.display_name, mode.color)
+
+        @bindings.add("c-l")  # Ctrl+L
+        def _clear_screen(event):
+            event.app.renderer.clear()
 
         history_path = project_root / ".cadforge" / "history"
         prompt_session = PromptSession(
             history=FileHistory(str(history_path)),
+            key_bindings=bindings,
         )
-        get_input = lambda: prompt_session.prompt("cadforge> ")
-    except ImportError:
-        get_input = lambda: input("cadforge> ")
+
+        def get_prompt():
+            return HTML(f'<style fg="{mode.color}">cadforge:{mode.value}&gt; </style>')
+
+        def get_input():
+            return prompt_session.prompt(get_prompt)
+    else:
+        def get_input():
+            return input(f"cadforge:{mode.value}> ")
 
     while True:
         try:
-            user_input = get_input().strip()
+            raw_input = get_input().strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
 
-        if not user_input:
+        if not raw_input:
+            continue
+
+        # Multi-line via backslash continuation
+        user_input = _handle_continuation(raw_input, get_input)
+
+        # Shell shortcut: !command
+        if user_input.startswith("!"):
+            _handle_shell_command(user_input[1:], renderer, project_root)
             continue
 
         # Handle built-in commands
         if user_input == "/quit" or user_input == "/exit":
             break
         elif user_input == "/help":
-            _show_help(renderer, slash_commands)
+            _show_help(renderer, slash_commands, mode)
             continue
         elif user_input == "/skills":
             _show_skills(renderer, slash_commands)
@@ -127,6 +173,21 @@ def _repl_loop(
         elif user_input.startswith("/provider"):
             _handle_provider(user_input, agent, renderer, project_root)
             continue
+        elif user_input == "/agent":
+            mode = InteractionMode.AGENT
+            renderer.render_mode_change(mode.display_name, mode.color)
+            continue
+        elif user_input == "/plan":
+            mode = InteractionMode.PLAN
+            renderer.render_mode_change(mode.display_name, mode.color)
+            continue
+        elif user_input == "/ask":
+            mode = InteractionMode.ASK
+            renderer.render_mode_change(mode.display_name, mode.color)
+            continue
+        elif user_input == "/mode":
+            renderer.render_mode_change(mode.display_name, mode.color)
+            continue
 
         # Handle slash commands (skills)
         parts = user_input.split(None, 1)
@@ -136,20 +197,68 @@ def _repl_loop(
             skill_arg = parts[1] if len(parts) > 1 else ""
             user_input = f"{skill.prompt}\n\nUser request: {skill_arg}"
 
-        # Process through agent
-        response = agent.process_message(user_input)
+        # Process through agent with current mode
+        response = agent.process_message(user_input, mode=mode.value)
         renderer.render_assistant_message(response)
 
 
-def _show_help(renderer: ChatRenderer, slash_commands: dict) -> None:
-    """Show help message."""
+def _handle_continuation(raw_input: str, get_input) -> str:
+    """Handle backslash continuation for multi-line input."""
+    lines = [raw_input]
+    while lines[-1].endswith("\\"):
+        lines[-1] = lines[-1][:-1]
+        try:
+            lines.append(get_input())
+        except (EOFError, KeyboardInterrupt):
+            break
+    return "\n".join(lines)
+
+
+def _handle_shell_command(command: str, renderer: ChatRenderer, project_root: Path) -> None:
+    """Execute a shell command directly."""
+    command = command.strip()
+    if not command:
+        renderer.render_info("Usage: !<command>")
+        return
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            cwd=str(project_root),
+            timeout=120,
+        )
+        if result.stdout:
+            renderer.render_info(result.stdout.rstrip())
+        if result.stderr:
+            renderer.render_error(result.stderr.rstrip())
+    except subprocess.TimeoutExpired:
+        renderer.render_error("Command timed out after 120 seconds.")
+    except Exception as e:
+        renderer.render_error(f"Shell error: {e}")
+
+
+def _show_help(renderer: ChatRenderer, slash_commands: dict, mode: InteractionMode) -> None:
+    """Show help message with mode info and keyboard shortcuts."""
     help_text = (
+        f"**Current Mode:** {mode.display_name}\n\n"
+        "**Modes:**\n"
+        "- `/agent` — Full agentic loop with all tools\n"
+        "- `/plan` — Read-only, generates plans without modifying files\n"
+        "- `/ask` — Pure Q&A, no tools, answers from knowledge\n"
+        "- `/mode` — Show current mode\n\n"
         "**Commands:**\n"
         "- `/help` — Show this help\n"
         "- `/provider` — Show or switch LLM provider\n"
         "- `/skills` — List available skills\n"
         "- `/sessions` — List recent sessions\n"
-        "- `/quit` — Exit CadForge\n"
+        "- `/quit` — Exit CadForge\n\n"
+        "**Shortcuts:**\n"
+        "- `Shift+Tab` — Cycle modes (agent -> plan -> ask)\n"
+        "- `Ctrl+L` — Clear screen\n"
+        "- `!command` — Run shell command directly\n"
+        "- `\\` at end of line — Continue on next line\n"
     )
     if slash_commands:
         help_text += "\n**Skills:**\n"

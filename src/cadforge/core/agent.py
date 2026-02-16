@@ -204,11 +204,23 @@ class Agent:
             self._auth_creds = resolve_auth()
         self._provider = create_provider(self.settings, self._auth_creds)
 
-    def process_message(self, user_input: str) -> str:
+    def process_message(self, user_input: str, mode: str = "agent") -> str:
         """Process a user message through the agentic loop.
+
+        Args:
+            user_input: The user's message text.
+            mode: Interaction mode — "agent", "plan", or "ask".
 
         Returns the final assistant text response.
         """
+        from cadforge.chat.modes import InteractionMode, get_mode_tools, get_plan_mode_permissions
+
+        # Parse mode (default to agent on invalid)
+        try:
+            current_mode = InteractionMode(mode)
+        except ValueError:
+            current_mode = InteractionMode.AGENT
+
         # Record user message
         self.session.add_user_message(user_input)
 
@@ -223,12 +235,48 @@ class Agent:
             messages = compact_messages(messages, summary)
             self.context_state.compaction_count += 1
 
-        # Agentic loop
-        tools = get_tool_definitions()
+        # Filter tools by mode
+        all_tools = get_tool_definitions()
+        allowed_tools = get_mode_tools(current_mode)
+        if allowed_tools is not None:
+            tools = [t for t in all_tools if t["name"] in allowed_tools]
+        else:
+            tools = all_tools
+
+        # Build mode-aware system prompt
+        system_prompt = self.system_prompt
+        if current_mode == InteractionMode.PLAN:
+            system_prompt += (
+                "\n\nYou are in PLAN mode. Read-only. "
+                "Provide a detailed plan, do NOT modify files."
+            )
+        elif current_mode == InteractionMode.ASK:
+            system_prompt += (
+                "\n\nYou are in ASK mode. No tools available. "
+                "Answer from knowledge only."
+            )
+
+        # Swap permissions for plan mode
+        original_permissions = self.executor.permissions
+        if current_mode == InteractionMode.PLAN:
+            self.executor.permissions = get_plan_mode_permissions()
+
+        try:
+            return self._run_agentic_loop(messages, system_prompt, tools)
+        finally:
+            self.executor.permissions = original_permissions
+
+    def _run_agentic_loop(
+        self,
+        messages: list[dict[str, Any]],
+        system_prompt: str,
+        tools: list[dict[str, Any]],
+    ) -> str:
+        """Execute the agentic tool-use loop."""
         max_iterations = 20
         for _ in range(max_iterations):
             response = self._provider.call(
-                messages, self.system_prompt, tools, self.settings,
+                messages, system_prompt, tools, self.settings,
             )
 
             if response is None:

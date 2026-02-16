@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cadforge.chat.modes import InteractionMode, get_plan_mode_permissions
 from cadforge.core.agent import Agent, build_system_prompt
 from cadforge.config import CadForgeSettings
 
@@ -79,3 +80,109 @@ class TestAgent:
         response = agent.process_message("hello")
         assert isinstance(response, str)
         assert len(response) > 0
+
+
+@pytest.fixture
+def mock_agent(tmp_project):
+    """Create an Agent with mocked LLM provider."""
+    settings = CadForgeSettings(
+        provider="ollama",
+        model="test-model",
+        base_url="http://localhost:11434/v1",
+    )
+
+    with patch("cadforge.core.agent.create_provider") as mock_create:
+        mock_provider = MagicMock()
+        mock_provider.call.return_value = {
+            "content": [{"type": "text", "text": "Test response"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+        mock_create.return_value = mock_provider
+
+        agent = Agent(
+            project_root=tmp_project,
+            settings=settings,
+        )
+        agent._mock_provider = mock_provider
+        yield agent
+
+
+class TestAgentModes:
+    def test_agent_mode_returns_str(self, mock_agent):
+        result = mock_agent.process_message("hello", mode="agent")
+        assert isinstance(result, str)
+        assert result == "Test response"
+
+    def test_plan_mode_returns_str(self, mock_agent):
+        result = mock_agent.process_message("design a bracket", mode="plan")
+        assert isinstance(result, str)
+
+    def test_ask_mode_returns_str(self, mock_agent):
+        result = mock_agent.process_message("what is PLA?", mode="ask")
+        assert isinstance(result, str)
+
+    def test_invalid_mode_defaults_to_agent(self, mock_agent):
+        result = mock_agent.process_message("hello", mode="invalid")
+        assert isinstance(result, str)
+
+    def test_plan_mode_filters_tools(self, mock_agent):
+        mock_agent.process_message("plan something", mode="plan")
+        call_args = mock_agent._mock_provider.call.call_args
+        tools = call_args[0][2]  # third positional arg
+        tool_names = {t["name"] for t in tools}
+        assert "ReadFile" in tool_names
+        assert "ListFiles" in tool_names
+        assert "SearchVault" in tool_names
+        assert "WriteFile" not in tool_names
+        assert "ExecuteCadQuery" not in tool_names
+
+    def test_ask_mode_passes_empty_tools(self, mock_agent):
+        mock_agent.process_message("question", mode="ask")
+        call_args = mock_agent._mock_provider.call.call_args
+        tools = call_args[0][2]
+        assert tools == []
+
+    def test_agent_mode_passes_all_tools(self, mock_agent):
+        mock_agent.process_message("build something", mode="agent")
+        call_args = mock_agent._mock_provider.call.call_args
+        tools = call_args[0][2]
+        tool_names = {t["name"] for t in tools}
+        assert "WriteFile" in tool_names
+        assert "ExecuteCadQuery" in tool_names
+        assert "ReadFile" in tool_names
+
+    def test_plan_mode_appends_system_prompt(self, mock_agent):
+        mock_agent.process_message("plan", mode="plan")
+        call_args = mock_agent._mock_provider.call.call_args
+        system_prompt = call_args[0][1]
+        assert "PLAN mode" in system_prompt
+        assert "Read-only" in system_prompt
+
+    def test_ask_mode_appends_system_prompt(self, mock_agent):
+        mock_agent.process_message("ask", mode="ask")
+        call_args = mock_agent._mock_provider.call.call_args
+        system_prompt = call_args[0][1]
+        assert "ASK mode" in system_prompt
+        assert "No tools available" in system_prompt
+
+    def test_plan_mode_swaps_permissions(self, mock_agent):
+        original_perms = mock_agent.executor.permissions
+        mock_agent.process_message("plan", mode="plan")
+        # After call completes, permissions should be restored
+        assert mock_agent.executor.permissions is original_perms
+
+    def test_plan_mode_restores_permissions_on_error(self, mock_agent):
+        original_perms = mock_agent.executor.permissions
+        mock_agent._mock_provider.call.side_effect = RuntimeError("API error")
+        with pytest.raises(RuntimeError):
+            mock_agent.process_message("plan", mode="plan")
+        assert mock_agent.executor.permissions is original_perms
+
+    def test_default_mode_is_agent(self, mock_agent):
+        mock_agent.process_message("hello")
+        call_args = mock_agent._mock_provider.call.call_args
+        tools = call_args[0][2]
+        tool_names = {t["name"] for t in tools}
+        # All tools should be present (agent mode)
+        assert "WriteFile" in tool_names
+        assert "ExecuteCadQuery" in tool_names
