@@ -235,7 +235,6 @@ class Agent:
             )
 
             # Execute tools and add results
-            messages = self.session.get_api_messages()
             tool_results = []
             for tool_use in tool_uses:
                 result = self.executor.execute(
@@ -248,8 +247,8 @@ class Agent:
                     "content": json.dumps(result),
                 })
 
-            # Add tool results as user message
-            self.session.add_user_message(json.dumps(tool_results))
+            # Add tool results as user message with proper content blocks
+            self.session.add_user_message(tool_results)
             messages = self.session.get_api_messages()
 
         return "Maximum iterations reached. Please try a simpler request."

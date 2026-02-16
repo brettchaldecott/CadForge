@@ -118,6 +118,98 @@ class TestSession:
         s = Session(tmp_project)
         assert s.session_id.startswith("session-")
 
+    def test_add_user_message_with_tool_results(self, tmp_project: Path):
+        """Tool results should be stored as content block lists, not strings."""
+        s = Session(tmp_project, "test-tool-results")
+        tool_results = [
+            {
+                "type": "tool_result",
+                "tool_use_id": "toolu_123",
+                "content": '{"success": true}',
+            }
+        ]
+        s.add_user_message(tool_results)
+        assert s.message_count == 1
+        assert isinstance(s.messages[0].content, list)
+        assert s.messages[0].content[0]["type"] == "tool_result"
+
+    def test_tool_result_roundtrip(self, tmp_project: Path):
+        """Tool result content blocks survive save/load."""
+        s1 = Session(tmp_project, "test-tr-roundtrip")
+        tool_results = [
+            {
+                "type": "tool_result",
+                "tool_use_id": "toolu_abc",
+                "content": '{"result": "ok"}',
+            }
+        ]
+        s1.add_user_message(tool_results)
+
+        s2 = Session(tmp_project, "test-tr-roundtrip")
+        s2.load()
+        assert isinstance(s2.messages[0].content, list)
+        assert s2.messages[0].content[0]["tool_use_id"] == "toolu_abc"
+
+    def test_get_api_messages_with_tool_results(self, tmp_project: Path):
+        """API messages should preserve tool_result content blocks."""
+        s = Session(tmp_project, "test-api-tr")
+        s.add_user_message("Make a cube")
+        s.add_assistant_message([
+            {"type": "text", "text": "I'll make a cube."},
+            {"type": "tool_use", "id": "toolu_1", "name": "ExecuteCadQuery",
+             "input": {"code": "result = 1"}},
+        ])
+        s.add_user_message([
+            {"type": "tool_result", "tool_use_id": "toolu_1",
+             "content": '{"success": true}'},
+        ])
+        msgs = s.get_api_messages()
+        assert len(msgs) == 3
+        assert msgs[2]["role"] == "user"
+        assert isinstance(msgs[2]["content"], list)
+        assert msgs[2]["content"][0]["type"] == "tool_result"
+
+    def test_get_api_messages_fixes_dangling_tool_use(self, tmp_project: Path):
+        """Dangling tool_use (interrupted session) gets error tool_results."""
+        s = Session(tmp_project, "test-dangling")
+        s.add_user_message("Make something")
+        s.add_assistant_message([
+            {"type": "text", "text": "Working on it."},
+            {"type": "tool_use", "id": "toolu_x", "name": "Bash",
+             "input": {"command": "echo hi"}},
+            {"type": "tool_use", "id": "toolu_y", "name": "ReadFile",
+             "input": {"path": "test.py"}},
+        ])
+        # No tool_result added — simulating interruption
+        msgs = s.get_api_messages()
+        # Should have 3 messages: user, assistant, auto-injected tool_results
+        assert len(msgs) == 3
+        assert msgs[2]["role"] == "user"
+        assert isinstance(msgs[2]["content"], list)
+        assert len(msgs[2]["content"]) == 2
+        assert msgs[2]["content"][0]["type"] == "tool_result"
+        assert msgs[2]["content"][0]["tool_use_id"] == "toolu_x"
+        assert msgs[2]["content"][1]["tool_use_id"] == "toolu_y"
+        assert msgs[2]["content"][0]["is_error"] is True
+
+    def test_get_api_messages_no_dangling_when_results_present(self, tmp_project: Path):
+        """No extra results injected when tool_results already exist."""
+        s = Session(tmp_project, "test-no-dangling")
+        s.add_user_message("test")
+        s.add_assistant_message([
+            {"type": "tool_use", "id": "toolu_z", "name": "Bash",
+             "input": {"command": "ls"}},
+        ])
+        s.add_user_message([
+            {"type": "tool_result", "tool_use_id": "toolu_z",
+             "content": "file1.py"},
+        ])
+        s.add_assistant_message("Done!")
+        msgs = s.get_api_messages()
+        # 4 messages, no extra injection needed
+        assert len(msgs) == 4
+        assert msgs[3]["content"] == "Done!"
+
 
 class TestSessionIndex:
     def test_update_and_list(self, tmp_project: Path):

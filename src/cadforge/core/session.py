@@ -90,8 +90,12 @@ class Session:
         self.messages.append(message)
         self._append_to_file(message)
 
-    def add_user_message(self, content: str) -> Message:
-        """Convenience method for adding a user message."""
+    def add_user_message(self, content: str | list[dict[str, Any]]) -> Message:
+        """Convenience method for adding a user message.
+
+        Content can be a string (normal user text) or a list of content
+        blocks (e.g., tool_result blocks after tool execution).
+        """
         msg = Message(role="user", content=content)
         self.add_message(msg)
         return msg
@@ -125,7 +129,12 @@ class Session:
         self._loaded = True
 
     def get_api_messages(self) -> list[dict[str, Any]]:
-        """Get messages formatted for the Anthropic API."""
+        """Get messages formatted for the Anthropic API.
+
+        Handles dangling tool_use blocks (from interrupted sessions) by
+        injecting error tool_result blocks so the API doesn't reject
+        the message sequence.
+        """
         api_msgs = []
         for msg in self.messages:
             if msg.role in ("user", "assistant"):
@@ -133,6 +142,33 @@ class Session:
                     "role": msg.role,
                     "content": msg.content,
                 })
+
+        # Fix dangling tool_use: if the last message is an assistant message
+        # with tool_use blocks but no following tool_result, inject error results
+        if api_msgs and api_msgs[-1]["role"] == "assistant":
+            content = api_msgs[-1]["content"]
+            if isinstance(content, list):
+                tool_use_ids = [
+                    block["id"]
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "tool_use"
+                ]
+                if tool_use_ids:
+                    # Add placeholder tool_result blocks for the dangling tool_use
+                    error_results = [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tu_id,
+                            "content": "Session was interrupted before tool execution completed.",
+                            "is_error": True,
+                        }
+                        for tu_id in tool_use_ids
+                    ]
+                    api_msgs.append({
+                        "role": "user",
+                        "content": error_results,
+                    })
+
         return api_msgs
 
     @property
