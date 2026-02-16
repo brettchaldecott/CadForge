@@ -13,14 +13,14 @@ source venv/bin/activate
 # Core install (agent + chat + vault text search)
 pip install -e ".[dev]"
 
-# With all optional backends (CadQuery, trimesh, LanceDB, PyVista)
-pip install -e ".[all,dev]"
+# Full install — mesh, RAG, viewer (works on all Python versions)
+pip install -e ".[full,dev]"
 
 # Or pick extras individually
-pip install -e ".[cad]"       # CadQuery modeling
 pip install -e ".[mesh]"      # trimesh analysis
 pip install -e ".[rag]"       # LanceDB + sentence-transformers
 pip install -e ".[viewer]"    # PyVista 3D viewer
+pip install -e ".[cad]"       # CadQuery (Python <=3.12 only)
 
 # Set your API key
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -35,9 +35,11 @@ cadforge index
 cadforge chat
 ```
 
-> **Note:** CadQuery requires `cadquery-ocp` (OpenCascade bindings) which may not
-> have wheels for all Python versions. If `pip install -e ".[cad]"` fails, try
-> Python 3.11 or 3.12, or use `conda install -c cadquery cadquery`.
+> **Note:** CadQuery requires `cadquery-ocp` (OpenCascade bindings) which only
+> has wheels for Python 3.12 and below. On Python 3.13+, use
+> `conda install -c cadquery cadquery`, or install without CadQuery using
+> `pip install -e ".[full,dev]"` — the agent can still generate CadQuery code
+> (you run it externally) and all other features work normally.
 
 ## Commands
 
