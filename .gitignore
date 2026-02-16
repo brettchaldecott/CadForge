@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environment
+venv/
+.venv/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CadForge output
+output/
+
+# LanceDB data
+.lance/
+
+# Auto-memory (personal)
+.cadforge/memory/
+
+# Local overrides
+CADFORGE.local.md
+.cadforge/CADFORGE.local.md

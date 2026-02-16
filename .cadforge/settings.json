@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "deny": ["Bash(rm:*)", "Bash(sudo:*)", "WriteFile(**/.env)"],
+    "allow": ["ReadFile(*)", "SearchVault(*)", "AnalyzeMesh(*)", "GetPrinter(*)"],
+    "ask": ["ExecuteCadQuery(*)", "WriteFile(*)", "Bash(*)", "ExportModel(*)"]
+  },
+  "hooks": []
+}

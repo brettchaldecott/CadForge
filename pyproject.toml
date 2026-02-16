@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cadforge"
+version = "0.1.0"
+description = "AI-powered CLI CAD tool for 3D printing"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "anthropic>=0.40.0",
+    "prompt-toolkit>=3.0.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24.0",
+    "cadquery>=2.4.0",
+    "trimesh>=3.20.0",
+    "lancedb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+    "pyvista>=0.43.0",
+    "pyarrow>=14.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.10",
+    "pytest-asyncio>=0.21",
+]
+
+[project.scripts]
+cadforge = "cadforge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
