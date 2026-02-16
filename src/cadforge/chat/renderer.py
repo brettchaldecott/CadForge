@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 try:
@@ -128,4 +129,45 @@ class ChatRenderer:
         else:
             print(f"CadForge — AI-powered CAD for 3D printing  [Mode: {mode_name}]")
             print("Shift+Tab: cycle modes  /help: commands")
+            print()
+
+    # --- Streaming render methods ---
+
+    def render_streaming_start(self) -> None:
+        """Called before the first streamed token."""
+        if self.use_rich:
+            self.console.print()
+        else:
+            print()
+
+    def render_text_delta(self, text: str) -> None:
+        """Print a streamed token without newline."""
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+    def render_text_done(self) -> None:
+        """End of a text content block — print newline."""
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+    def render_status(self, message: str) -> None:
+        """Show a transient status message (overwritten by next output)."""
+        if self.use_rich:
+            self.console.print(f"[dim italic]{message}[/dim italic]", end="\r")
+        else:
+            sys.stdout.write(f"\r{message}")
+            sys.stdout.flush()
+
+    def render_cancelled(self) -> None:
+        """Show cancellation notice."""
+        if self.use_rich:
+            self.console.print("\n[bold yellow]Cancelled.[/bold yellow]")
+        else:
+            print("\nCancelled.")
+
+    def render_streaming_end(self) -> None:
+        """Called after streaming is complete."""
+        if self.use_rich:
+            self.console.print()
+        else:
             print()

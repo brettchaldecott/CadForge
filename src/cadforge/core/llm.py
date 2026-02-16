@@ -337,3 +337,320 @@ def create_provider(settings: CadForgeSettings, auth_creds: Any = None) -> LLMPr
     if settings.provider == "ollama":
         return OllamaProvider(base_url=settings.base_url)
     return AnthropicProvider(auth_creds=auth_creds)
+
+
+# ---------------------------------------------------------------------------
+# Async streaming providers
+# ---------------------------------------------------------------------------
+
+import asyncio
+from cadforge.core.events import AgentEvent
+
+
+class AsyncAnthropicProvider:
+    """Async Anthropic provider with streaming support.
+
+    Uses the anthropic SDK's async streaming API, pushing AgentEvents
+    to a queue as tokens arrive.
+    """
+
+    def __init__(self, auth_creds: Any = None):
+        self._auth_creds = auth_creds
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        system_prompt: str,
+        tools: list[dict[str, Any]],
+        settings: CadForgeSettings,
+        event_queue: asyncio.Queue[AgentEvent],
+    ) -> dict[str, Any]:
+        """Stream an LLM response, pushing events to the queue.
+
+        Returns the same normalized response dict as the sync call().
+        """
+        try:
+            from cadforge.core.auth import create_async_anthropic_client
+
+            client, self._auth_creds = create_async_anthropic_client(self._auth_creds)
+
+            content_blocks: list[dict[str, Any]] = []
+            usage_info: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
+
+            # Accumulators for the current content block
+            current_text = ""
+            current_tool: dict[str, Any] | None = None
+            current_tool_json = ""
+
+            async with client.messages.stream(
+                model=settings.model,
+                max_tokens=settings.max_tokens,
+                system=system_prompt,
+                tools=tools or [],
+                messages=messages,
+            ) as stream:
+                async for event in stream:
+                    etype = event.type
+
+                    if etype == "message_start":
+                        msg = getattr(event, "message", None)
+                        if msg and hasattr(msg, "usage"):
+                            usage_info["input_tokens"] = getattr(msg.usage, "input_tokens", 0)
+
+                    elif etype == "message_delta":
+                        delta_usage = getattr(event, "usage", None)
+                        if delta_usage:
+                            usage_info["output_tokens"] = getattr(
+                                delta_usage, "output_tokens", 0
+                            )
+
+                    elif etype == "content_block_start":
+                        cb = getattr(event, "content_block", None)
+                        if cb:
+                            block_type = getattr(cb, "type", "text")
+                            if block_type == "text":
+                                current_text = ""
+                            elif block_type == "tool_use":
+                                current_tool = {
+                                    "type": "tool_use",
+                                    "id": getattr(cb, "id", ""),
+                                    "name": getattr(cb, "name", ""),
+                                    "input": {},
+                                }
+                                current_tool_json = ""
+                                await event_queue.put(
+                                    AgentEvent.tool_use_start(
+                                        current_tool["name"], current_tool["id"]
+                                    )
+                                )
+
+                    elif etype == "content_block_delta":
+                        delta = getattr(event, "delta", None)
+                        if delta:
+                            delta_type = getattr(delta, "type", "")
+                            if delta_type == "text_delta":
+                                text = getattr(delta, "text", "")
+                                current_text += text
+                                await event_queue.put(AgentEvent.text_delta(text))
+                            elif delta_type == "input_json_delta":
+                                partial = getattr(delta, "partial_json", "")
+                                current_tool_json += partial
+
+                    elif etype == "content_block_stop":
+                        if current_tool is not None:
+                            # Finalize tool_use block
+                            try:
+                                current_tool["input"] = json.loads(current_tool_json) if current_tool_json else {}
+                            except json.JSONDecodeError:
+                                current_tool["input"] = {}
+                            content_blocks.append(current_tool)
+                            current_tool = None
+                            current_tool_json = ""
+                        else:
+                            # Finalize text block
+                            if current_text:
+                                content_blocks.append({"type": "text", "text": current_text})
+                                await event_queue.put(AgentEvent.text_done(current_text))
+                            current_text = ""
+
+            if not content_blocks:
+                content_blocks.append({"type": "text", "text": ""})
+
+            return {"content": content_blocks, "usage": usage_info}
+
+        except ImportError:
+            error_resp = {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Anthropic SDK not installed. Install with: pip install anthropic",
+                    }
+                ],
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+            await event_queue.put(AgentEvent.error(error_resp["content"][0]["text"]))
+            return error_resp
+        except Exception as e:
+            error_msg = str(e)
+            if "api_key" in error_msg.lower() or "auth" in error_msg.lower():
+                error_msg = (
+                    f"Authentication error: {e}\n\n"
+                    "CadForge supports three auth methods:\n"
+                    "1. ANTHROPIC_API_KEY env var (API key billing)\n"
+                    "2. ANTHROPIC_AUTH_TOKEN env var (OAuth token)\n"
+                    "3. Automatic: Claude Code OAuth from macOS Keychain"
+                )
+            error_resp = {
+                "content": [{"type": "text", "text": f"API error: {error_msg}"}],
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+            await event_queue.put(AgentEvent.error(f"API error: {error_msg}"))
+            return error_resp
+
+    def format_tool_results(
+        self, tool_results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        return tool_results
+
+
+class AsyncOllamaProvider:
+    """Async Ollama provider with streaming support.
+
+    Uses the openai SDK's async streaming API via Ollama's
+    OpenAI-compatible endpoint.
+    """
+
+    DEFAULT_BASE_URL = "http://localhost:11434/v1"
+
+    def __init__(self, base_url: str | None = None):
+        self._base_url = base_url or self.DEFAULT_BASE_URL
+        self._client = None
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            from openai import AsyncOpenAI
+
+            self._client = AsyncOpenAI(
+                base_url=self._base_url,
+                api_key="ollama",
+            )
+        return self._client
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        system_prompt: str,
+        tools: list[dict[str, Any]],
+        settings: CadForgeSettings,
+        event_queue: asyncio.Queue[AgentEvent],
+    ) -> dict[str, Any]:
+        """Stream an LLM response, pushing events to the queue."""
+        try:
+            client = self._get_client()
+
+            oai_messages = [{"role": "system", "content": system_prompt}]
+            oai_messages.extend(OllamaProvider._translate_messages(messages))
+            oai_tools = OllamaProvider._translate_tools(tools) if tools else None
+
+            kwargs: dict[str, Any] = {
+                "model": settings.model,
+                "max_tokens": settings.max_tokens,
+                "messages": oai_messages,
+                "stream": True,
+            }
+            if oai_tools:
+                kwargs["tools"] = oai_tools
+
+            text_accum = ""
+            tool_calls_accum: dict[int, dict[str, Any]] = {}  # index -> partial tool call
+            usage_info: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
+
+            stream = await client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                if not chunk.choices:
+                    # Usage-only chunk at the end
+                    if chunk.usage:
+                        usage_info["input_tokens"] = chunk.usage.prompt_tokens or 0
+                        usage_info["output_tokens"] = chunk.usage.completion_tokens or 0
+                    continue
+
+                delta = chunk.choices[0].delta
+
+                # Text content
+                if delta.content:
+                    text_accum += delta.content
+                    await event_queue.put(AgentEvent.text_delta(delta.content))
+
+                # Tool calls (streamed incrementally)
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_calls_accum:
+                            tool_calls_accum[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": "",
+                                "arguments": "",
+                            }
+                            if tc_delta.function and tc_delta.function.name:
+                                tool_calls_accum[idx]["name"] = tc_delta.function.name
+                                await event_queue.put(
+                                    AgentEvent.tool_use_start(
+                                        tc_delta.function.name,
+                                        tc_delta.id or "",
+                                    )
+                                )
+                        if tc_delta.function and tc_delta.function.arguments:
+                            tool_calls_accum[idx]["arguments"] += tc_delta.function.arguments
+                        if tc_delta.id:
+                            tool_calls_accum[idx]["id"] = tc_delta.id
+
+                # Check for finish
+                if chunk.choices[0].finish_reason:
+                    if chunk.usage:
+                        usage_info["input_tokens"] = chunk.usage.prompt_tokens or 0
+                        usage_info["output_tokens"] = chunk.usage.completion_tokens or 0
+
+            # Build normalized response
+            content_blocks: list[dict[str, Any]] = []
+            if text_accum:
+                content_blocks.append({"type": "text", "text": text_accum})
+                await event_queue.put(AgentEvent.text_done(text_accum))
+
+            for idx in sorted(tool_calls_accum.keys()):
+                tc = tool_calls_accum[idx]
+                try:
+                    args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                except json.JSONDecodeError:
+                    args = {}
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": tc["id"] or f"call_{uuid.uuid4().hex[:24]}",
+                    "name": tc["name"],
+                    "input": args,
+                })
+
+            if not content_blocks:
+                content_blocks.append({"type": "text", "text": ""})
+
+            return {"content": content_blocks, "usage": usage_info}
+
+        except ImportError:
+            error_resp = {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "OpenAI SDK not installed. Install with: pip install 'cadforge[ollama]'",
+                    }
+                ],
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+            await event_queue.put(AgentEvent.error(error_resp["content"][0]["text"]))
+            return error_resp
+        except Exception as e:
+            error_resp = {
+                "content": [{"type": "text", "text": f"Ollama error: {e}"}],
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+            await event_queue.put(AgentEvent.error(f"Ollama error: {e}"))
+            return error_resp
+
+    def format_tool_results(
+        self, tool_results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        oai_messages = []
+        for result in tool_results:
+            oai_messages.append({
+                "role": "tool",
+                "tool_call_id": result["tool_use_id"],
+                "content": result.get("content", ""),
+            })
+        return oai_messages
+
+
+def create_async_provider(
+    settings: CadForgeSettings, auth_creds: Any = None
+) -> AsyncAnthropicProvider | AsyncOllamaProvider:
+    """Factory function to create the appropriate async LLM provider."""
+    if settings.provider == "ollama":
+        return AsyncOllamaProvider(base_url=settings.base_url)
+    return AsyncAnthropicProvider(auth_creds=auth_creds)

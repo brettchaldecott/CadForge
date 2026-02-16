@@ -6,8 +6,9 @@ then executes the appropriate tool handler.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Coroutine
 
 from cadforge.core.hooks import (
     HookConfig,
@@ -37,10 +38,21 @@ class ToolExecutor:
         self.hook_configs = hook_configs or []
         self.ask_callback = ask_callback or (lambda _: True)
         self._handlers: dict[str, Callable] = {}
+        self._async_handlers: dict[str, Callable[..., Coroutine]] = {}
 
     def register_handler(self, tool_name: str, handler: Callable) -> None:
         """Register a handler function for a tool."""
         self._handlers[tool_name] = handler
+
+    def register_async_handler(
+        self, tool_name: str, handler: Callable[..., Coroutine]
+    ) -> None:
+        """Register an async handler for a tool.
+
+        Async handlers are preferred by execute_async(). Tools without
+        an async handler fall back to running the sync handler in a thread.
+        """
+        self._async_handlers[tool_name] = handler
 
     def execute(
         self,
@@ -134,6 +146,95 @@ class ToolExecutor:
         )
 
         return output
+
+    async def execute_async(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute a tool asynchronously.
+
+        If a native async handler is registered, calls it directly.
+        Otherwise wraps the sync handler via asyncio.to_thread().
+        Permission checks and hooks run in a thread pool since they
+        are synchronous.
+        """
+        # Run permission + hook checks in a thread (they're sync)
+        check_result = await asyncio.to_thread(
+            self._check_permissions, tool_name, tool_input
+        )
+        if check_result is not None:
+            return check_result
+
+        # Prefer native async handler
+        if tool_name in self._async_handlers:
+            try:
+                result = await self._async_handlers[tool_name](tool_input)
+                output = {
+                    "success": True,
+                    "result": result,
+                    "error": None,
+                    "blocked": False,
+                }
+            except Exception as e:
+                output = {
+                    "success": False,
+                    "result": None,
+                    "error": str(e),
+                    "blocked": False,
+                }
+        else:
+            # Fall back to sync handler in thread pool
+            output = await asyncio.to_thread(self.execute, tool_name, tool_input)
+
+        return output
+
+    def _check_permissions(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Check permissions and run pre-hooks. Returns a result dict if blocked, else None."""
+        arg = _extract_permission_arg(tool_name, tool_input)
+        tool_call = ToolCall(name=tool_name, argument=arg)
+
+        perm = evaluate_permission(tool_call, self.permissions)
+        if perm == PermissionResult.DENY:
+            return {
+                "success": False,
+                "result": None,
+                "error": f"Permission denied: {tool_call}",
+                "blocked": True,
+            }
+
+        if perm == PermissionResult.ASK:
+            from cadforge.core.permissions import format_permission_prompt
+            prompt = format_permission_prompt(tool_call)
+            if not self.ask_callback(prompt):
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": f"User denied: {tool_call}",
+                    "blocked": True,
+                }
+
+        pre_results = run_hooks(
+            self.hook_configs,
+            HookEvent.PRE_TOOL_USE,
+            tool_name,
+            arg,
+            cwd=str(self.project_root),
+        )
+        for hr in pre_results:
+            if hr.blocked:
+                return {
+                    "success": False,
+                    "result": None,
+                    "error": f"Blocked by hook: {hr.stderr}",
+                    "blocked": True,
+                }
+
+        return None
 
 
 def _extract_permission_arg(tool_name: str, tool_input: dict[str, Any]) -> str:

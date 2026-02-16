@@ -6,11 +6,13 @@ Sub-agents cannot spawn other sub-agents (no nesting).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Callable
 
 from cadforge.config import CadForgeSettings
+from cadforge.core.events import AgentEvent
 from cadforge.core.llm import LLMProvider
 from cadforge.core.subagent import SubagentConfig, SubagentResult
 from cadforge.tools.executor import ToolExecutor
@@ -185,6 +187,108 @@ def run_subagent(
         messages.append({"role": "user", "content": tool_results})
 
     # Max iterations reached — return partial output
+    warning = f"\n[Sub-agent '{config.name}' reached max iterations ({config.max_iterations})]"
+    collected_text.append(warning)
+    return SubagentResult(
+        agent_name=config.name,
+        success=True,
+        output="\n".join(collected_text),
+    )
+
+
+async def run_subagent_async(
+    config: SubagentConfig,
+    task_prompt: str,
+    context: str,
+    async_provider: Any,
+    settings: CadForgeSettings,
+    project_root: Path,
+    permissions: dict[str, list[str]],
+    ask_callback: Callable[[str], bool],
+) -> SubagentResult:
+    """Run a sub-agent asynchronously with streaming.
+
+    Same structure as run_subagent() but uses async provider.stream()
+    and executor.execute_async().
+    """
+    filtered_tools = _filter_tools(config.tools)
+
+    handlers = _create_tool_handlers(config.tools, project_root, settings)
+    sub_executor = ToolExecutor(
+        project_root=project_root,
+        permissions=permissions,
+        ask_callback=ask_callback,
+    )
+    for name, handler in handlers.items():
+        sub_executor.register_handler(name, handler)
+
+    sub_settings = CadForgeSettings(
+        permissions=settings.permissions,
+        hooks=settings.hooks,
+        provider=settings.provider,
+        model=config.model,
+        max_tokens=settings.max_tokens,
+        temperature=settings.temperature,
+        printer=settings.printer,
+        base_url=settings.base_url,
+    )
+
+    user_content = task_prompt
+    if context:
+        user_content = f"{context}\n\n{task_prompt}"
+
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": user_content},
+    ]
+
+    # Use a private event queue — sub-agent events aren't rendered
+    event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
+
+    collected_text: list[str] = []
+    for _ in range(config.max_iterations):
+        response = await async_provider.stream(
+            messages, config.system_prompt, filtered_tools, sub_settings, event_queue
+        )
+
+        if response is None:
+            return SubagentResult(
+                agent_name=config.name,
+                success=False,
+                output="",
+                error="Failed to get response from LLM provider",
+            )
+
+        text_parts: list[str] = []
+        tool_uses: list[dict[str, Any]] = []
+
+        for block in response.get("content", []):
+            if block.get("type") == "text":
+                text_parts.append(block["text"])
+            elif block.get("type") == "tool_use":
+                tool_uses.append(block)
+
+        if not tool_uses:
+            collected_text.extend(text_parts)
+            return SubagentResult(
+                agent_name=config.name,
+                success=True,
+                output="\n".join(collected_text),
+            )
+
+        collected_text.extend(text_parts)
+        messages.append({"role": "assistant", "content": response["content"]})
+
+        tool_results: list[dict[str, Any]] = []
+        for tool_use in tool_uses:
+            result = await sub_executor.execute_async(tool_use["name"], tool_use["input"])
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_use["id"],
+                "content": json.dumps(result),
+            })
+
+        messages.append({"role": "user", "content": tool_results})
+
     warning = f"\n[Sub-agent '{config.name}' reached max iterations ({config.max_iterations})]"
     collected_text.append(warning)
     return SubagentResult(

@@ -1,8 +1,15 @@
-"""prompt_toolkit REPL for CadForge chat interface."""
+"""prompt_toolkit REPL for CadForge chat interface.
+
+The REPL is the supervisor: the agent runs as a cancellable asyncio.Task.
+Ctrl+C and Escape cancel the running agent and return to the prompt.
+"""
 
 from __future__ import annotations
 
+import asyncio
+import signal
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +17,7 @@ from cadforge.chat.modes import InteractionMode
 from cadforge.chat.renderer import ChatRenderer
 from cadforge.config import load_settings, save_settings
 from cadforge.core.agent import Agent
+from cadforge.core.events import AgentEvent, EventType
 from cadforge.core.session import Session
 from cadforge.skills.loader import discover_skills, get_skill_by_name
 from cadforge.utils.paths import get_project_settings_path
@@ -21,9 +29,8 @@ def run_repl(
 ) -> None:
     """Run the interactive REPL chat loop.
 
-    Args:
-        project_root: Project root directory
-        session_id: Optional session ID to resume
+    Entry point that sets up the session/agent then hands off to the
+    async event loop.  Falls back to the sync loop if asyncio setup fails.
     """
     renderer = ChatRenderer()
     settings = load_settings(project_root)
@@ -34,7 +41,10 @@ def run_repl(
         session.load()
         renderer.render_info(f"Resumed session: {session_id}")
 
-    # Set up agent with styled permission prompt
+    # Permission prompt callback — used by both sync and async paths.
+    # During async execution the agent task is suspended at an await point
+    # while the permission prompt runs in a thread via to_thread(), so
+    # stdin is free.
     def ask_callback(prompt: str) -> bool:
         try:
             renderer.render_tool_permission(prompt)
@@ -85,7 +95,7 @@ def run_repl(
     slash_commands = {f"/{s.name}": s for s in skills}
 
     try:
-        _repl_loop(agent, renderer, slash_commands, project_root, mode)
+        asyncio.run(_async_repl(agent, renderer, slash_commands, project_root, mode))
     except KeyboardInterrupt:
         pass
     finally:
@@ -93,14 +103,18 @@ def run_repl(
         renderer.render_info("Session saved.")
 
 
-def _repl_loop(
+# ---------------------------------------------------------------------------
+# Async REPL
+# ---------------------------------------------------------------------------
+
+async def _async_repl(
     agent: Agent,
     renderer: ChatRenderer,
     slash_commands: dict,
     project_root: Path,
     mode: InteractionMode,
 ) -> None:
-    """Main REPL input loop."""
+    """Async REPL loop using prompt_toolkit's prompt_async."""
     try:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.formatted_text import HTML
@@ -126,6 +140,7 @@ def _repl_loop(
             event.app.renderer.clear()
 
         history_path = project_root / ".cadforge" / "history"
+        history_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_session = PromptSession(
             history=FileHistory(str(history_path)),
             key_bindings=bindings,
@@ -134,15 +149,15 @@ def _repl_loop(
         def get_prompt():
             return HTML(f'<style fg="{mode.color}">cadforge:{mode.value}&gt; </style>')
 
-        def get_input():
-            return prompt_session.prompt(get_prompt)
+        async def get_input():
+            return await prompt_session.prompt_async(get_prompt)
     else:
-        def get_input():
-            return input(f"cadforge:{mode.value}> ")
+        async def get_input():
+            return await asyncio.to_thread(input, f"cadforge:{mode.value}> ")
 
     while True:
         try:
-            raw_input = get_input().strip()
+            raw_input = (await get_input()).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -151,7 +166,7 @@ def _repl_loop(
             continue
 
         # Multi-line via backslash continuation
-        user_input = _handle_continuation(raw_input, get_input)
+        user_input = await _handle_continuation_async(raw_input, get_input)
 
         # Shell shortcut: !command
         if user_input.startswith("!"):
@@ -197,22 +212,203 @@ def _repl_loop(
             skill_arg = parts[1] if len(parts) > 1 else ""
             user_input = f"{skill.prompt}\n\nUser request: {skill_arg}"
 
-        # Process through agent with current mode
-        response = agent.process_message(user_input, mode=mode.value)
-        renderer.render_assistant_message(response)
+        # Process through async agent with streaming
+        await _run_agent_with_events(agent, renderer, user_input, mode)
 
 
-def _handle_continuation(raw_input: str, get_input) -> str:
-    """Handle backslash continuation for multi-line input."""
+# ---------------------------------------------------------------------------
+# Agent execution with event-driven rendering
+# ---------------------------------------------------------------------------
+
+async def _run_agent_with_events(
+    agent: Agent,
+    renderer: ChatRenderer,
+    user_input: str,
+    mode: InteractionMode,
+) -> None:
+    """Run agent as a cancellable task, consuming events for rendering.
+
+    Ctrl+C cancels the agent and returns to the prompt.
+    Escape during execution also cancels.
+    """
+    event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
+
+    agent_task = asyncio.create_task(
+        agent.process_message_async(user_input, mode=mode.value, event_queue=event_queue)
+    )
+
+    # --- Escape key listener ---
+    escape_task = asyncio.create_task(_wait_for_escape())
+
+    # --- SIGINT handler (Ctrl+C) ---
+    loop = asyncio.get_running_loop()
+    original_handler = signal.getsignal(signal.SIGINT)
+
+    def _sigint_cancel(sig, frame):
+        agent_task.cancel()
+
+    signal.signal(signal.SIGINT, _sigint_cancel)
+
+    streaming_started = False
+    try:
+        while not agent_task.done():
+            # Wait for either an event, escape, or agent completion
+            get_event = asyncio.ensure_future(_safe_queue_get(event_queue, timeout=0.1))
+            done, pending = await asyncio.wait(
+                [get_event, escape_task, agent_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            # Cancel pending futures we don't need
+            if get_event in pending:
+                get_event.cancel()
+
+            # Check if escape was pressed
+            if escape_task in done:
+                agent_task.cancel()
+                try:
+                    await agent_task
+                except asyncio.CancelledError:
+                    pass
+                break
+
+            # Process event if we got one
+            if get_event in done:
+                try:
+                    event = get_event.result()
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    continue
+                if event is not None:
+                    if not streaming_started:
+                        renderer.render_streaming_start()
+                        streaming_started = True
+                    _handle_event(event, renderer)
+                    if event.type in (EventType.COMPLETION, EventType.CANCELLED, EventType.ERROR):
+                        break
+
+        # Drain remaining events from the queue
+        while not event_queue.empty():
+            try:
+                event = event_queue.get_nowait()
+                if not streaming_started:
+                    renderer.render_streaming_start()
+                    streaming_started = True
+                _handle_event(event, renderer)
+            except asyncio.QueueEmpty:
+                break
+
+        # Await agent task to propagate exceptions
+        if not agent_task.done():
+            try:
+                await agent_task
+            except asyncio.CancelledError:
+                if not streaming_started:
+                    renderer.render_streaming_start()
+                renderer.render_cancelled()
+
+    except asyncio.CancelledError:
+        if not streaming_started:
+            renderer.render_streaming_start()
+        renderer.render_cancelled()
+    finally:
+        # Restore signal handler
+        signal.signal(signal.SIGINT, original_handler)
+        # Clean up escape task
+        if not escape_task.done():
+            escape_task.cancel()
+            try:
+                await escape_task
+            except asyncio.CancelledError:
+                pass
+        if streaming_started:
+            renderer.render_streaming_end()
+
+
+async def _safe_queue_get(
+    queue: asyncio.Queue[AgentEvent],
+    timeout: float = 0.1,
+) -> AgentEvent | None:
+    """Get from queue with timeout, returning None on timeout."""
+    try:
+        return await asyncio.wait_for(queue.get(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return None
+
+
+async def _wait_for_escape() -> None:
+    """Wait for the Escape key to be pressed.
+
+    Reads stdin char-by-char in a thread executor. Returns when
+    Escape (0x1b) is detected. On platforms without termios (Windows)
+    this awaits forever (Escape cancellation is not supported there).
+    """
+    try:
+        import termios
+        import tty
+    except ImportError:
+        # termios not available (e.g. Windows) — just wait forever
+        await asyncio.Event().wait()
+        return
+
+    fd = sys.stdin.fileno()
+
+    def _read_escape():
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            while True:
+                ch = sys.stdin.read(1)
+                if ch == "\x1b":
+                    return
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    try:
+        await asyncio.to_thread(_read_escape)
+    except (OSError, asyncio.CancelledError):
+        pass
+
+
+def _handle_event(event: AgentEvent, renderer: ChatRenderer) -> None:
+    """Dispatch an agent event to the appropriate renderer method."""
+    if event.type == EventType.TEXT_DELTA:
+        renderer.render_text_delta(event.data.get("text", ""))
+    elif event.type == EventType.TEXT_DONE:
+        renderer.render_text_done()
+    elif event.type == EventType.TOOL_USE_START:
+        renderer.render_tool_use(event.data.get("name", ""), {})
+    elif event.type == EventType.TOOL_RESULT:
+        result = event.data.get("result", {})
+        renderer.render_tool_result(event.data.get("name", ""), result)
+    elif event.type == EventType.STATUS:
+        renderer.render_status(event.data.get("message", ""))
+    elif event.type == EventType.COMPLETION:
+        pass  # Text was already streamed via TEXT_DELTA events
+    elif event.type == EventType.CANCELLED:
+        renderer.render_cancelled()
+    elif event.type == EventType.ERROR:
+        renderer.render_error(event.data.get("message", "Unknown error"))
+
+
+# ---------------------------------------------------------------------------
+# Async multi-line continuation
+# ---------------------------------------------------------------------------
+
+async def _handle_continuation_async(raw_input: str, get_input) -> str:
+    """Handle backslash continuation for multi-line input (async)."""
     lines = [raw_input]
     while lines[-1].endswith("\\"):
         lines[-1] = lines[-1][:-1]
         try:
-            lines.append(get_input())
+            lines.append(await get_input())
         except (EOFError, KeyboardInterrupt):
             break
     return "\n".join(lines)
 
+
+# ---------------------------------------------------------------------------
+# Helper functions (unchanged from sync version)
+# ---------------------------------------------------------------------------
 
 def _handle_shell_command(command: str, renderer: ChatRenderer, project_root: Path) -> None:
     """Execute a shell command directly."""
@@ -257,6 +453,7 @@ def _show_help(renderer: ChatRenderer, slash_commands: dict, mode: InteractionMo
         "**Shortcuts:**\n"
         "- `Shift+Tab` — Cycle modes (agent -> plan -> ask)\n"
         "- `Ctrl+L` — Clear screen\n"
+        "- `Ctrl+C` / `Escape` — Cancel running agent\n"
         "- `!command` — Run shell command directly\n"
         "- `\\` at end of line — Continue on next line\n"
     )

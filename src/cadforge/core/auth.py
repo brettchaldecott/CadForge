@@ -203,6 +203,17 @@ def _update_claude_code_keychain(creds: AuthCredentials) -> None:
         pass  # Non-critical — token still works in memory
 
 
+def _build_client_kwargs(creds: AuthCredentials) -> dict[str, Any]:
+    """Build keyword arguments for Anthropic client constructors."""
+    kwargs: dict[str, Any] = {}
+    if creds.api_key:
+        kwargs["api_key"] = creds.api_key
+    elif creds.auth_token:
+        kwargs["auth_token"] = creds.auth_token
+        kwargs["default_headers"] = {"anthropic-beta": OAUTH_BETA_HEADER}
+    return kwargs
+
+
 def create_anthropic_client(creds: AuthCredentials) -> Any:
     """Create an Anthropic client with the resolved credentials.
 
@@ -214,12 +225,19 @@ def create_anthropic_client(creds: AuthCredentials) -> Any:
     if creds.needs_refresh:
         creds = refresh_oauth_token(creds)
 
-    kwargs: dict[str, Any] = {}
-
-    if creds.api_key:
-        kwargs["api_key"] = creds.api_key
-    elif creds.auth_token:
-        kwargs["auth_token"] = creds.auth_token
-        kwargs["default_headers"] = {"anthropic-beta": OAUTH_BETA_HEADER}
-
+    kwargs = _build_client_kwargs(creds)
     return anthropic.Anthropic(**kwargs), creds
+
+
+def create_async_anthropic_client(creds: AuthCredentials) -> Any:
+    """Create an async Anthropic client with the resolved credentials.
+
+    Identical to create_anthropic_client() but returns AsyncAnthropic.
+    """
+    import anthropic
+
+    if creds.needs_refresh:
+        creds = refresh_oauth_token(creds)
+
+    kwargs = _build_client_kwargs(creds)
+    return anthropic.AsyncAnthropic(**kwargs), creds
