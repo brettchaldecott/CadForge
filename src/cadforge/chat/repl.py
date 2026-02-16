@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from cadforge.chat.modes import InteractionMode
+from cadforge.chat.prompt_bar import PromptBar
 from cadforge.chat.renderer import ChatRenderer
 from cadforge.config import load_settings, save_settings
 from cadforge.core.agent import Agent
@@ -32,7 +33,8 @@ def run_repl(
     Entry point that sets up the session/agent then hands off to the
     async event loop.  Falls back to the sync loop if asyncio setup fails.
     """
-    renderer = ChatRenderer()
+    prompt_bar = PromptBar()
+    renderer = ChatRenderer(prompt_bar=prompt_bar)
     settings = load_settings(project_root)
 
     # Set up session
@@ -95,10 +97,11 @@ def run_repl(
     slash_commands = {f"/{s.name}": s for s in skills}
 
     try:
-        asyncio.run(_async_repl(agent, renderer, slash_commands, project_root, mode))
+        asyncio.run(_async_repl(agent, renderer, slash_commands, project_root, mode, prompt_bar))
     except KeyboardInterrupt:
         pass
     finally:
+        prompt_bar.deactivate()
         agent.save_session()
         renderer.render_info("Session saved.")
 
@@ -113,6 +116,7 @@ async def _async_repl(
     slash_commands: dict,
     project_root: Path,
     mode: InteractionMode,
+    prompt_bar: PromptBar | None = None,
 ) -> None:
     """Async REPL loop using prompt_toolkit's prompt_async."""
     try:
@@ -133,6 +137,8 @@ async def _async_repl(
         def _cycle_mode(event):
             nonlocal mode
             mode = mode.next()
+            if prompt_bar:
+                prompt_bar.set_mode(mode.display_name, mode.color)
             renderer.render_mode_change(mode.display_name, mode.color)
 
         @bindings.add("c-l")  # Ctrl+L
@@ -141,15 +147,24 @@ async def _async_repl(
 
         history_path = project_root / ".cadforge" / "history"
         history_path.parent.mkdir(parents=True, exist_ok=True)
+
+        def get_toolbar():
+            if prompt_bar:
+                return HTML(prompt_bar.get_bottom_toolbar_text())
+            return None
+
         prompt_session = PromptSession(
             history=FileHistory(str(history_path)),
             key_bindings=bindings,
+            bottom_toolbar=get_toolbar,
         )
 
         def get_prompt():
             return HTML(f'<style fg="{mode.color}">cadforge:{mode.value}&gt; </style>')
 
         async def get_input():
+            if prompt_bar:
+                prompt_bar.deactivate()
             return await prompt_session.prompt_async(get_prompt)
     else:
         async def get_input():
@@ -190,14 +205,20 @@ async def _async_repl(
             continue
         elif user_input == "/agent":
             mode = InteractionMode.AGENT
+            if prompt_bar:
+                prompt_bar.set_mode(mode.display_name, mode.color)
             renderer.render_mode_change(mode.display_name, mode.color)
             continue
         elif user_input == "/plan":
             mode = InteractionMode.PLAN
+            if prompt_bar:
+                prompt_bar.set_mode(mode.display_name, mode.color)
             renderer.render_mode_change(mode.display_name, mode.color)
             continue
         elif user_input == "/ask":
             mode = InteractionMode.ASK
+            if prompt_bar:
+                prompt_bar.set_mode(mode.display_name, mode.color)
             renderer.render_mode_change(mode.display_name, mode.color)
             continue
         elif user_input == "/mode":
@@ -211,6 +232,10 @@ async def _async_repl(
             skill = slash_commands[cmd]
             skill_arg = parts[1] if len(parts) > 1 else ""
             user_input = f"{skill.prompt}\n\nUser request: {skill_arg}"
+
+        # Activate prompt bar before agent runs
+        if prompt_bar:
+            prompt_bar.activate()
 
         # Process through async agent with streaming
         await _run_agent_with_events(agent, renderer, user_input, mode)

@@ -20,12 +20,13 @@ except ImportError:
 class ChatRenderer:
     """Renders chat output with rich formatting."""
 
-    def __init__(self, use_rich: bool = True):
+    def __init__(self, use_rich: bool = True, prompt_bar=None):
         self.use_rich = use_rich and HAS_RICH
         if self.use_rich:
             self.console = Console()
         else:
             self.console = None
+        self.prompt_bar = prompt_bar
 
     def render_assistant_message(self, text: str) -> None:
         """Render an assistant response."""
@@ -38,6 +39,8 @@ class ChatRenderer:
 
     def render_tool_use(self, tool_name: str, tool_input: dict[str, Any]) -> None:
         """Render a tool use notification."""
+        if self.prompt_bar:
+            self.prompt_bar.update_status(f"Executing {tool_name}...")
         if self.use_rich:
             self.console.print(
                 Panel(
@@ -135,6 +138,8 @@ class ChatRenderer:
 
     def render_streaming_start(self) -> None:
         """Called before the first streamed token."""
+        if self.prompt_bar:
+            self.prompt_bar.set_busy("Thinking...")
         if self.use_rich:
             self.console.print()
         else:
@@ -152,6 +157,9 @@ class ChatRenderer:
 
     def render_status(self, message: str) -> None:
         """Show a transient status message (overwritten by next output)."""
+        if self.prompt_bar:
+            self.prompt_bar.update_status(message)
+            return
         if self.use_rich:
             self.console.print(f"[dim italic]{message}[/dim italic]", end="\r")
         else:
@@ -167,6 +175,8 @@ class ChatRenderer:
 
     def render_streaming_end(self) -> None:
         """Called after streaming is complete."""
+        if self.prompt_bar:
+            self.prompt_bar.set_idle()
         if self.use_rich:
             self.console.print()
         else:
