@@ -49,6 +49,22 @@ def run_repl(
 
     renderer.render_welcome()
 
+    # Show auth status
+    auth_labels = {
+        "api_key": "API key",
+        "env_token": "ANTHROPIC_AUTH_TOKEN",
+        "claude_code": "Claude Code OAuth (subscription)",
+        "none": "No credentials found",
+    }
+    auth_label = auth_labels.get(agent._auth_creds.source, agent._auth_creds.source)
+    if agent._auth_creds.is_valid:
+        renderer.render_info(f"Auth: {auth_label}")
+    else:
+        renderer.render_error(
+            "No authentication configured. Set ANTHROPIC_API_KEY, "
+            "ANTHROPIC_AUTH_TOKEN, or log in to Claude Code."
+        )
+
     # Discover available skills
     skills = discover_skills(project_root)
     slash_commands = {f"/{s.name}": s for s in skills}

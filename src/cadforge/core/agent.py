@@ -106,6 +106,10 @@ class Agent:
         self.ask_callback = ask_callback or (lambda _: True)
         self.output_callback = output_callback or print
 
+        # Resolve authentication
+        from cadforge.core.auth import resolve_auth
+        self._auth_creds = resolve_auth()
+
         # Build system prompt
         self.system_prompt = build_system_prompt(project_root, self.settings)
 
@@ -253,8 +257,8 @@ class Agent:
     def _call_api(self, messages: list[dict[str, Any]]) -> dict[str, Any] | None:
         """Call the Anthropic API."""
         try:
-            import anthropic
-            client = anthropic.Anthropic()
+            from cadforge.core.auth import create_anthropic_client
+            client, self._auth_creds = create_anthropic_client(self._auth_creds)
             response = client.messages.create(
                 model=self.settings.model,
                 max_tokens=self.settings.max_tokens,
@@ -278,8 +282,17 @@ class Agent:
                 "usage": {"input_tokens": 0, "output_tokens": 0},
             }
         except Exception as e:
+            error_msg = str(e)
+            if "api_key" in error_msg.lower() or "auth" in error_msg.lower():
+                error_msg = (
+                    f"Authentication error: {e}\n\n"
+                    "CadForge supports three auth methods:\n"
+                    "1. ANTHROPIC_API_KEY env var (API key billing)\n"
+                    "2. ANTHROPIC_AUTH_TOKEN env var (OAuth token)\n"
+                    "3. Automatic: Claude Code OAuth from macOS Keychain"
+                )
             return {
-                "content": [{"type": "text", "text": f"API error: {e}"}],
+                "content": [{"type": "text", "text": f"API error: {error_msg}"}],
                 "usage": {"input_tokens": 0, "output_tokens": 0},
             }
 
