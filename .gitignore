@@ -12,6 +12,10 @@ build/
 venv/
 .venv/
 
+# Node.js
+node_modules/
+*.tsbuildinfo
+
 # Environment
 .env
 
@@ -33,6 +37,10 @@ output/
 
 # Auto-memory (personal)
 .cadforge/memory/
+
+# Session data
+.cadforge/sessions/
+vault/sessions/
 
 # Local overrides
 CADFORGE.local.md

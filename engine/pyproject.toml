@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cadforge-engine"
+version = "0.1.0"
+description = "CadForge Python backend — CadQuery sandbox, mesh analysis, vault indexing"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.5.0",
+    "pyyaml>=6.0.2",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+cad = [
+    "cadquery>=2.4.0",
+]
+mesh = [
+    "trimesh>=3.20.0",
+]
+rag = [
+    "lancedb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+    "pyarrow>=14.0.0",
+]
+viewer = [
+    "pyvista>=0.43.0",
+]
+agent = [
+    "anthropic>=0.40.0",
+]
+full = [
+    "cadforge-engine[mesh,rag,viewer,agent]",
+]
+all = [
+    "cadforge-engine[cad,mesh,rag,viewer,agent]",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.25.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
