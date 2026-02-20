@@ -121,6 +121,17 @@ export interface VaultIndexResponse {
   error?: string | null;
 }
 
+// ── CAD Subagent ──
+
+export interface CadSubagentRequest {
+  prompt: string;
+  context: string;
+  project_root: string;
+  auth: { api_key?: string | null; auth_token?: string | null };
+  model?: string;
+  max_tokens?: number;
+}
+
 // ── SSE Events (CAD subagent) ──
 
 export type SSEEventType =

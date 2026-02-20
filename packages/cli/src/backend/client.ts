@@ -16,6 +16,8 @@ import type {
   VaultSearchResponse,
   VaultIndexRequest,
   VaultIndexResponse,
+  CadSubagentRequest,
+  SSEEvent,
 } from '@cadforge/shared';
 
 export class BackendClient {
@@ -101,6 +103,85 @@ export class BackendClient {
 
   async indexVault(req: VaultIndexRequest): Promise<VaultIndexResponse> {
     return this.request<VaultIndexResponse>('POST', '/vault/index', req);
+  }
+
+  // ── CAD Subagent ──
+
+  /**
+   * Stream a CAD subagent session via SSE.
+   * Parses the SSE wire format and calls onSSEEvent for each event.
+   * Returns the final output from the 'completion' event.
+   */
+  async streamCadSubagent(
+    req: CadSubagentRequest,
+    onSSEEvent: (event: SSEEvent) => void,
+  ): Promise<{ success: boolean; output: string; error?: string }> {
+    const url = `${this.baseUrl}/subagent/cad`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return { success: false, output: '', error: `Engine API error ${response.status}: ${text}` };
+    }
+
+    if (!response.body) {
+      return { success: false, output: '', error: 'No response body from SSE endpoint' };
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalOutput = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';  // Keep incomplete line in buffer
+
+        let currentEvent = '';
+        let currentData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            currentData = line.slice(6);
+          } else if (line === '' && currentEvent) {
+            // End of SSE event (blank line)
+            try {
+              const data = JSON.parse(currentData) as Record<string, unknown>;
+              const sseEvent: SSEEvent = {
+                event: currentEvent as SSEEvent['event'],
+                data,
+              };
+              onSSEEvent(sseEvent);
+
+              if (currentEvent === 'completion') {
+                finalOutput = (data.text as string) ?? '';
+              }
+            } catch {
+              // Skip malformed events
+            }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    return { success: true, output: finalOutput };
   }
 
   // ── Generic tool dispatch ──

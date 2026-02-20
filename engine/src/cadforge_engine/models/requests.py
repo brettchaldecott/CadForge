@@ -46,3 +46,13 @@ class VaultIndexRequest(BaseModel):
     """Request to index the vault."""
     project_root: str = Field(..., description="Project root directory path")
     incremental: bool = Field(default=False, description="Only re-index changed files")
+
+
+class CadSubagentRequest(BaseModel):
+    """Request to run the CAD subagent."""
+    prompt: str = Field(..., description="Task prompt for the CAD subagent")
+    context: str = Field(default="", description="Additional context")
+    project_root: str = Field(..., description="Project root directory path")
+    auth: dict = Field(default_factory=dict, description="Forwarded auth credentials")
+    model: str = Field(default="claude-sonnet-4-5-20250929", description="Model to use")
+    max_tokens: int = Field(default=8192, description="Max tokens per LLM call")

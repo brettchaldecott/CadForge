@@ -53,6 +53,7 @@ export class Agent {
   private _authCreds: AuthCredentials;
   private _provider: LLMProvider;
   private _backendClient?: BackendClient;
+  private _currentOnEvent?: EventCallback;
 
   constructor(opts: AgentOptions) {
     this.projectRoot = opts.projectRoot;
@@ -117,9 +118,16 @@ export class Agent {
     this.executor.registerHandler('SearchWeb', () =>
       ({ success: false, error: 'Not yet implemented' }),
     );
-    this.executor.registerHandler('Task', () =>
-      ({ success: false, error: 'Subagents not yet implemented (Phase 4)' }),
-    );
+    this.executor.registerAsyncHandler('Task', async (inp) => {
+      const { handleTask } = await import('../tools/task.js');
+      return handleTask(inp, {
+        provider: this._provider,
+        settings: this.settings,
+        projectRoot: this.projectRoot,
+        backendClient: this._backendClient,
+        onEvent: this._currentOnEvent,
+      });
+    });
   }
 
   /**
@@ -187,6 +195,7 @@ export class Agent {
     onEvent: EventCallback,
     signal?: AbortSignal,
   ): Promise<string> {
+    this._currentOnEvent = onEvent;
     const MAX_ITERATIONS = 20;
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
