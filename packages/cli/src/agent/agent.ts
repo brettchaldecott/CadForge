@@ -5,7 +5,7 @@
  * responses and tool use, pushing AgentEvents for real-time rendering.
  */
 
-import { EventType, type AgentEvent, type CadForgeSettings, type ProviderType } from '@cadforge/shared';
+import { EventType, makeEvent, type CadForgeSettings, type ProviderType } from '@cadforge/shared';
 import { getDefaultModel } from '@cadforge/shared';
 import { loadSettings } from '../config/settings.js';
 import type { AuthCredentials } from '../llm/auth.js';
@@ -29,10 +29,6 @@ import {
 import { buildSystemPrompt } from './system-prompt.js';
 import { type InteractionMode, getModeTools, getPlanModePermissions } from './modes.js';
 import type { BackendClient } from '../backend/client.js';
-
-function makeEvent(type: EventType, data: Record<string, unknown>): AgentEvent {
-  return { type, data, timestamp: new Date().toISOString() };
-}
 
 export interface AgentOptions {
   projectRoot: string;

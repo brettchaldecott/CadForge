@@ -5,7 +5,7 @@
  * needed when Bedrock is actually used.
  */
 
-import { EventType, type AgentEvent, type CadForgeSettings } from '@cadforge/shared';
+import { EventType, makeEvent, type CadForgeSettings } from '@cadforge/shared';
 import type {
   ContentBlock,
   CredentialInfo,
@@ -16,10 +16,6 @@ import type {
 } from './provider.js';
 
 const RETRY_DELAYS = [1000, 2000, 4000];
-
-function makeEvent(type: EventType, data: Record<string, unknown>): AgentEvent {
-  return { type, data, timestamp: new Date().toISOString() };
-}
 
 export class BedrockProvider implements LLMProvider {
   private _region: string;

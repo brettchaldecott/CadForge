@@ -6,16 +6,12 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { EventType, type AgentEvent, type CadForgeSettings } from '@cadforge/shared';
+import { EventType, makeEvent, type CadForgeSettings } from '@cadforge/shared';
 import type { AuthCredentials } from './auth.js';
 import { buildClientOptions, needsRefresh, refreshOAuthToken } from './auth.js';
 import type { ContentBlock, CredentialInfo, EventCallback, LLMMessage, LLMProvider, LLMResponse } from './provider.js';
 
 const RETRY_DELAYS = [1000, 2000, 4000]; // ms
-
-function makeEvent(type: EventType, data: Record<string, unknown>): AgentEvent {
-  return { type, data, timestamp: new Date().toISOString() };
-}
 
 export class AnthropicProvider implements LLMProvider {
   private _creds: AuthCredentials;

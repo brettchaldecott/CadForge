@@ -73,13 +73,3 @@ export function getVenvDir(): string {
   return join(getUserCadforgeDir(), '.venv');
 }
 
-/**
- * Get output directories.
- */
-export function getOutputDir(projectRoot: string, sub?: string): string {
-  const parts = [projectRoot, 'output'];
-  if (sub) parts.push(sub);
-  const d = join(...parts);
-  mkdirSync(d, { recursive: true });
-  return d;
-}

@@ -14,7 +14,7 @@ import { render } from 'ink';
 import { findProjectRoot } from '../config/paths.js';
 import { loadSettings } from '../config/settings.js';
 import { BackendManager } from '../backend/manager.js';
-import { resolveAuth, createEmptyCredentials } from '../llm/auth.js';
+import { resolveAuthForProvider } from '../llm/auth.js';
 import { App } from '../ui/App.js';
 
 export default class Chat extends Command {
@@ -39,9 +39,7 @@ export default class Chat extends Command {
     }
 
     // Resolve auth
-    const creds = settings.provider === 'ollama'
-      ? createEmptyCredentials('ollama')
-      : resolveAuth();
+    const creds = resolveAuthForProvider(settings.provider, settings.providerConfig);
 
     // Detect local engine for dev installs
     const localEngine = join(projectRoot, 'engine');

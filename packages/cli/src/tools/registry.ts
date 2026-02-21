@@ -1,6 +1,5 @@
 /**
  * Tool definitions — Anthropic-format JSON schemas for all tools.
- * Will be fully populated in Phase 2.
  */
 
 export interface ToolDefinition {
@@ -20,7 +19,7 @@ export interface ToolRegistryEntry {
 }
 
 /**
- * All registered tools. Extended in Phase 2 with full schemas.
+ * All registered tools.
  */
 export const TOOL_REGISTRY: ToolRegistryEntry[] = [
   {

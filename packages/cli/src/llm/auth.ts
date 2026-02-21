@@ -194,15 +194,3 @@ export function resolveAuthForProvider(
   }
 }
 
-/**
- * Get Anthropic API key (simple version for backward compat).
- */
-export function getAnthropicApiKey(): string {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) {
-    throw new Error(
-      'ANTHROPIC_API_KEY not set. Set it in your environment or run cadforge config set api_key <key>',
-    );
-  }
-  return key;
-}

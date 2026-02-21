@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { EventType, type AgentEvent, type CadForgeSettings, type ProviderType } from '@cadforge/shared';
+import { EventType, makeEvent, type CadForgeSettings, type ProviderType } from '@cadforge/shared';
 import type {
   ContentBlock,
   CredentialInfo,
@@ -18,10 +18,6 @@ import type {
 } from './provider.js';
 
 const RETRY_DELAYS = [1000, 2000, 4000]; // ms
-
-function makeEvent(type: EventType, data: Record<string, unknown>): AgentEvent {
-  return { type, data, timestamp: new Date().toISOString() };
-}
 
 export class OpenAICompatibleProvider implements LLMProvider {
   private _providerName: ProviderType;

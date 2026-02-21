@@ -1,6 +1,5 @@
 /**
  * Permission evaluator — deny/allow/ask rule matching.
- * Will be fully implemented in Phase 2.
  */
 
 import type { PermissionsConfig } from '@cadforge/shared';

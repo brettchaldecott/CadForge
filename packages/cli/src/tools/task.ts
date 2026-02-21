@@ -3,8 +3,8 @@
  * explore/plan run in Node; cad delegates to Python SSE.
  */
 
-import { EventType, getDefaultSubagentModel } from '@cadforge/shared';
-import type { CadForgeSettings, AgentEvent, CadSubagentRequest, CadSubagentProviderConfig } from '@cadforge/shared';
+import { EventType, makeEvent, getDefaultSubagentModel } from '@cadforge/shared';
+import type { CadForgeSettings, CadSubagentRequest, CadSubagentProviderConfig } from '@cadforge/shared';
 import type { LLMProvider, EventCallback } from '../llm/provider.js';
 import type { BackendClient } from '../backend/client.js';
 import { SubagentExecutor } from '../agent/subagent.js';
@@ -17,10 +17,6 @@ export interface TaskDeps {
   projectRoot: string;
   backendClient?: BackendClient;
   onEvent?: EventCallback;
-}
-
-function makeEvent(type: EventType, data: Record<string, unknown>): AgentEvent {
-  return { type, data, timestamp: new Date().toISOString() };
 }
 
 /**
