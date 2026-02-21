@@ -168,6 +168,33 @@ export function buildClientOptions(creds: AuthCredentials): Record<string, unkno
 }
 
 /**
+ * Resolve credentials per provider type.
+ */
+export function resolveAuthForProvider(
+  provider: import('@cadforge/shared').ProviderType,
+  providerConfig: import('@cadforge/shared').ProviderConfig,
+): AuthCredentials {
+  switch (provider) {
+    case 'anthropic': {
+      // Check provider_config.apiKey first, then fall through to standard chain
+      if (providerConfig.apiKey) {
+        return { ...createEmptyCredentials('api_key'), apiKey: providerConfig.apiKey };
+      }
+      return resolveAuth();
+    }
+    case 'openai': {
+      const key = providerConfig.apiKey ?? process.env.OPENAI_API_KEY ?? null;
+      return { ...createEmptyCredentials(key ? 'api_key' : 'none'), apiKey: key };
+    }
+    case 'ollama':
+      return createEmptyCredentials('ollama');
+    case 'bedrock':
+      // AWS SDK uses its own credential chain (env vars, profiles, instance roles)
+      return createEmptyCredentials('none');
+  }
+}
+
+/**
  * Get Anthropic API key (simple version for backward compat).
  */
 export function getAnthropicApiKey(): string {

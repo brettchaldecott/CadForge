@@ -1,20 +1,15 @@
 /**
- * Ollama provider (OpenAI-compatible) — will be implemented in Phase 4.
+ * Ollama provider — thin wrapper over OpenAICompatibleProvider.
+ *
+ * Ollama exposes an OpenAI-compatible API at http://localhost:11434/v1.
  */
 
-import type { CadForgeSettings } from '@cadforge/shared';
-import type { ContentBlock, EventCallback, LLMMessage, LLMProvider, LLMResponse } from './provider.js';
+import { OpenAICompatibleProvider } from './openai.js';
 
-export class OllamaProvider implements LLMProvider {
-  async stream(
-    _messages: LLMMessage[],
-    _options: { system: string; tools: Record<string, unknown>[]; settings: CadForgeSettings },
-    _onEvent: EventCallback,
-  ): Promise<LLMResponse> {
-    throw new Error('Ollama provider not yet implemented (Phase 4)');
-  }
-
-  formatToolResults(toolResults: ContentBlock[]): ContentBlock[] {
-    return toolResults;
-  }
+export function createOllamaProvider(baseUrl?: string | null): OpenAICompatibleProvider {
+  return new OpenAICompatibleProvider(
+    'ollama',
+    'ollama', // api_key ignored by Ollama but required by the provider
+    baseUrl ?? 'http://localhost:11434/v1',
+  );
 }

@@ -5,11 +5,12 @@
  * responses and tool use, pushing AgentEvents for real-time rendering.
  */
 
-import { EventType, type AgentEvent, type CadForgeSettings } from '@cadforge/shared';
+import { EventType, type AgentEvent, type CadForgeSettings, type ProviderType } from '@cadforge/shared';
+import { getDefaultModel } from '@cadforge/shared';
 import { loadSettings } from '../config/settings.js';
 import type { AuthCredentials } from '../llm/auth.js';
-import { createEmptyCredentials, resolveAuth } from '../llm/auth.js';
-import { AnthropicProvider } from '../llm/anthropic.js';
+import { resolveAuthForProvider } from '../llm/auth.js';
+import { createProvider } from '../llm/factory.js';
 import type { ContentBlock, EventCallback, LLMProvider, LLMResponse } from '../llm/provider.js';
 import { ToolExecutor } from '../tools/executor.js';
 import { getToolDefinitions } from '../tools/registry.js';
@@ -61,14 +62,12 @@ export class Agent {
     this.session = opts.session ?? new Session(opts.projectRoot);
     this._backendClient = opts.backendClient;
 
-    // Resolve auth
-    if (this.settings.provider === 'ollama') {
-      this._authCreds = createEmptyCredentials('ollama');
-    } else {
-      this._authCreds = resolveAuth();
-    }
-
-    this._provider = new AnthropicProvider(this._authCreds);
+    // Resolve auth per provider
+    this._authCreds = resolveAuthForProvider(this.settings.provider, this.settings.providerConfig);
+    this._provider = createProvider(this.settings.provider, {
+      credentials: this._authCreds,
+      providerConfig: this.settings.providerConfig,
+    });
 
     // Build system prompt
     this.systemPrompt = buildSystemPrompt(this.projectRoot, this.settings);
@@ -291,6 +290,20 @@ export class Agent {
       }
     }
     return 'Previous conversation covered: ' + parts.join('; ');
+  }
+
+  /**
+   * Switch provider and model at runtime.
+   * Re-resolves credentials for the new provider.
+   */
+  switchProvider(provider: ProviderType, model?: string): void {
+    (this.settings as { provider: ProviderType }).provider = provider;
+    (this.settings as { model: string }).model = model ?? getDefaultModel(provider);
+    this._authCreds = resolveAuthForProvider(provider, this.settings.providerConfig);
+    this._provider = createProvider(provider, {
+      credentials: this._authCreds,
+      providerConfig: this.settings.providerConfig,
+    });
   }
 
   saveSession(): void {

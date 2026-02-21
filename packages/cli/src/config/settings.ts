@@ -18,8 +18,21 @@ const PermissionsSchema = z.object({
   ask: z.array(z.string()),
 });
 
+const ProviderConfigSchema = z.object({
+  api_key: z.string().nullable().optional(),
+  base_url: z.string().nullable().optional(),
+  aws_region: z.string().nullable().optional(),
+  aws_profile: z.string().nullable().optional(),
+}).optional();
+
+const SubagentModelsSchema = z.object({
+  explore: z.string().nullable().optional(),
+  plan: z.string().nullable().optional(),
+  cad: z.string().nullable().optional(),
+}).optional();
+
 const SettingsSchema = z.object({
-  provider: z.enum(['anthropic', 'ollama']).optional(),
+  provider: z.enum(['anthropic', 'openai', 'ollama', 'bedrock']).optional(),
   model: z.string().optional(),
   max_tokens: z.number().int().positive().optional(),
   temperature: z.number().min(0).max(1).optional(),
@@ -27,6 +40,8 @@ const SettingsSchema = z.object({
   base_url: z.string().nullable().optional(),
   engine_url: z.string().nullable().optional(),
   engine_port: z.number().int().positive().optional(),
+  provider_config: ProviderConfigSchema,
+  subagent_models: SubagentModelsSchema,
   permissions: PermissionsSchema.optional(),
   hooks: z.array(z.record(z.unknown())).optional(),
 });
@@ -88,6 +103,17 @@ export function loadSettings(projectRoot?: string): CadForgeSettings {
     base_url: DEFAULT_SETTINGS.baseUrl,
     engine_url: DEFAULT_SETTINGS.engineUrl,
     engine_port: DEFAULT_SETTINGS.enginePort,
+    provider_config: {
+      api_key: DEFAULT_SETTINGS.providerConfig.apiKey,
+      base_url: DEFAULT_SETTINGS.providerConfig.baseUrl,
+      aws_region: DEFAULT_SETTINGS.providerConfig.awsRegion,
+      aws_profile: DEFAULT_SETTINGS.providerConfig.awsProfile,
+    },
+    subagent_models: {
+      explore: DEFAULT_SETTINGS.subagentModels.explore,
+      plan: DEFAULT_SETTINGS.subagentModels.plan,
+      cad: DEFAULT_SETTINGS.subagentModels.cad,
+    },
     permissions: DEFAULT_SETTINGS.permissions,
     hooks: DEFAULT_SETTINGS.hooks,
   };

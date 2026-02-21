@@ -123,11 +123,24 @@ export interface VaultIndexResponse {
 
 // ── CAD Subagent ──
 
+import type { ProviderType } from './config.js';
+
+export interface CadSubagentProviderConfig {
+  provider: ProviderType;
+  api_key?: string | null;
+  auth_token?: string | null;
+  base_url?: string | null;
+  aws_region?: string | null;
+  aws_profile?: string | null;
+}
+
 export interface CadSubagentRequest {
   prompt: string;
   context: string;
   project_root: string;
-  auth: { api_key?: string | null; auth_token?: string | null };
+  /** @deprecated Use provider_config instead */
+  auth?: { api_key?: string | null; auth_token?: string | null };
+  provider_config?: CadSubagentProviderConfig;
   model?: string;
   max_tokens?: number;
 }

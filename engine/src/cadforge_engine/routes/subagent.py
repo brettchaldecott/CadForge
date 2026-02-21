@@ -13,7 +13,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from cadforge_engine.agent.cad_agent import run_cad_subagent
-from cadforge_engine.agent.llm import SubagentLLMClient
+from cadforge_engine.agent.llm import create_subagent_client
 from cadforge_engine.models.requests import CadSubagentRequest
 
 logger = logging.getLogger(__name__)
@@ -24,27 +24,43 @@ router = APIRouter(prefix="/subagent")
 @router.post("/cad")
 async def cad_subagent_endpoint(req: CadSubagentRequest) -> StreamingResponse:
     """Run the CAD subagent and stream SSE events."""
-    # Extract auth from forwarded credentials
-    api_key = req.auth.get("api_key")
-    auth_token = req.auth.get("auth_token")
+    try:
+        # Prefer provider_config; fall back to legacy auth dict
+        if req.provider_config is not None:
+            llm_client = create_subagent_client(
+                provider_config=req.provider_config,
+                model=req.model,
+                max_tokens=req.max_tokens,
+            )
+        elif req.auth:
+            # Legacy path: treat auth as Anthropic credentials
+            llm_client = create_subagent_client(
+                provider_config=req.auth,
+                model=req.model,
+                max_tokens=req.max_tokens,
+            )
+        else:
+            async def error_stream():
+                yield _format_sse("completion", {"text": "Error: No auth credentials or provider config provided"})
+                yield _format_sse("done", {})
 
-    if not api_key and not auth_token:
-        async def error_stream():
-            yield _format_sse("completion", {"text": "Error: No auth credentials provided"})
+            return StreamingResponse(
+                error_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+    except Exception as e:
+        logger.exception("Failed to create LLM client")
+
+        async def client_error_stream():
+            yield _format_sse("completion", {"text": f"Error creating LLM client: {e}"})
             yield _format_sse("done", {})
 
         return StreamingResponse(
-            error_stream(),
+            client_error_stream(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
-
-    llm_client = SubagentLLMClient(
-        api_key=api_key,
-        auth_token=auth_token,
-        model=req.model,
-        max_tokens=req.max_tokens,
-    )
 
     async def event_stream():
         try:

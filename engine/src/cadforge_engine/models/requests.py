@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -48,11 +50,24 @@ class VaultIndexRequest(BaseModel):
     incremental: bool = Field(default=False, description="Only re-index changed files")
 
 
+class CadSubagentProviderConfig(BaseModel):
+    """Provider configuration forwarded from the Node CLI."""
+    provider: Literal["anthropic", "openai", "ollama", "bedrock"] = "anthropic"
+    api_key: str | None = None
+    auth_token: str | None = None
+    base_url: str | None = None
+    aws_region: str | None = None
+    aws_profile: str | None = None
+
+
 class CadSubagentRequest(BaseModel):
     """Request to run the CAD subagent."""
     prompt: str = Field(..., description="Task prompt for the CAD subagent")
     context: str = Field(default="", description="Additional context")
     project_root: str = Field(..., description="Project root directory path")
-    auth: dict = Field(default_factory=dict, description="Forwarded auth credentials")
+    auth: dict = Field(default_factory=dict, description="Forwarded auth credentials (deprecated)")
+    provider_config: CadSubagentProviderConfig | None = Field(
+        default=None, description="Provider configuration (preferred over auth)"
+    )
     model: str = Field(default="claude-sonnet-4-5-20250929", description="Model to use")
     max_tokens: int = Field(default=8192, description="Max tokens per LLM call")

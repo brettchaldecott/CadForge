@@ -26,6 +26,15 @@ export interface LLMResponse {
 
 export type EventCallback = (event: AgentEvent) => void;
 
+export interface CredentialInfo {
+  provider: import('@cadforge/shared').ProviderType;
+  apiKey?: string | null;
+  authToken?: string | null;
+  baseUrl?: string | null;
+  awsRegion?: string | null;
+  awsProfile?: string | null;
+}
+
 export interface LLMProvider {
   /**
    * Stream an LLM response, calling the event callback as tokens arrive.
@@ -46,4 +55,10 @@ export interface LLMProvider {
    * Takes Anthropic-style tool_result blocks and returns provider-specific format.
    */
   formatToolResults(toolResults: ContentBlock[]): ContentBlock[] | LLMMessage;
+
+  /**
+   * Return credential/provider info for forwarding to subagents.
+   * Replaces instanceof checks when building CadSubagentRequest.
+   */
+  getCredentialInfo(): CredentialInfo;
 }

@@ -5,7 +5,7 @@
  * CAD subagent delegation is handled separately via Python SSE.
  */
 
-import type { CadForgeSettings } from '@cadforge/shared';
+import { type CadForgeSettings, getDefaultSubagentModel } from '@cadforge/shared';
 import type { LLMProvider, ContentBlock, EventCallback } from '../llm/provider.js';
 import type { BackendClient } from '../backend/client.js';
 import { getToolDefinitions, type ToolDefinition } from '../tools/registry.js';
@@ -29,10 +29,10 @@ export interface SubagentResult {
   error?: string;
 }
 
-function createExploreConfig(): SubagentConfig {
+function createExploreConfig(settings: CadForgeSettings): SubagentConfig {
   return {
     name: 'explore',
-    model: 'claude-haiku-4-5-20251001',
+    model: settings.subagentModels.explore ?? getDefaultSubagentModel(settings.provider, 'explore'),
     tools: ['ReadFile', 'ListFiles', 'SearchVault', 'Bash'],
     maxIterations: 10,
     systemPrompt:
@@ -42,10 +42,10 @@ function createExploreConfig(): SubagentConfig {
   };
 }
 
-function createPlanConfig(): SubagentConfig {
+function createPlanConfig(settings: CadForgeSettings): SubagentConfig {
   return {
     name: 'plan',
-    model: 'claude-sonnet-4-5-20250929',
+    model: settings.subagentModels.plan ?? getDefaultSubagentModel(settings.provider, 'plan'),
     tools: ['ReadFile', 'ListFiles', 'SearchVault'],
     maxIterations: 10,
     systemPrompt:
@@ -55,12 +55,12 @@ function createPlanConfig(): SubagentConfig {
   };
 }
 
-export function getSubagentConfig(agentType: SubagentType): SubagentConfig {
+export function getSubagentConfig(agentType: SubagentType, settings: CadForgeSettings): SubagentConfig {
   switch (agentType) {
     case 'explore':
-      return createExploreConfig();
+      return createExploreConfig(settings);
     case 'plan':
-      return createPlanConfig();
+      return createPlanConfig(settings);
   }
 }
 
@@ -112,7 +112,7 @@ export class SubagentExecutor {
     projectRoot: string,
     backendClient?: BackendClient,
   ): Promise<SubagentResult> {
-    const config = getSubagentConfig(agentType);
+    const config = getSubagentConfig(agentType, settings);
 
     // Filter tool definitions to config.tools only, never include Task
     const allTools = getToolDefinitions();

@@ -75,15 +75,19 @@ export class BackendManager {
       },
     );
 
-    // Log stderr for debugging
+    // Log stderr — suppress routine uvicorn info and noisy dependency warnings
     this.process.stderr?.on('data', (data: Buffer) => {
       const line = data.toString().trim();
-      if (line) {
-        // Only log non-routine uvicorn messages
-        if (!line.includes('INFO:') || line.includes('error') || line.includes('Error')) {
-          log(`[engine] ${line}`);
-        }
-      }
+      if (!line) return;
+      // Skip routine uvicorn info lines
+      if (line.includes('INFO:')) return;
+      // Skip noisy torch/numpy/transformers warnings during startup
+      if (line.includes('UserWarning:') || line.includes('Disabling PyTorch')
+        || line.includes('PyTorch was not found') || line.includes('compiled using NumPy')
+        || line.includes('pybind11') || line.includes('downgrade to')
+        || line.includes('expect that some modules') || line.includes('Traceback')
+        || line.includes('File "') || line.startsWith('  ')) return;
+      log(`[engine] ${line}`);
     });
 
     this.process.on('exit', (code) => {

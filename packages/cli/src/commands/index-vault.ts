@@ -9,6 +9,9 @@ import { loadSettings } from '../config/settings.js';
 import { BackendManager } from '../backend/manager.js';
 
 export default class Index extends Command {
+  static override id = 'index';
+  static override aliases = ['index'];
+  static override hidden = true;
   static override description = 'Index the vault for semantic search';
 
   static override flags = {

@@ -3,11 +3,10 @@
  * explore/plan run in Node; cad delegates to Python SSE.
  */
 
-import { EventType } from '@cadforge/shared';
-import type { CadForgeSettings, AgentEvent, CadSubagentRequest } from '@cadforge/shared';
+import { EventType, getDefaultSubagentModel } from '@cadforge/shared';
+import type { CadForgeSettings, AgentEvent, CadSubagentRequest, CadSubagentProviderConfig } from '@cadforge/shared';
 import type { LLMProvider, EventCallback } from '../llm/provider.js';
 import type { BackendClient } from '../backend/client.js';
-import { AnthropicProvider } from '../llm/anthropic.js';
 import { SubagentExecutor } from '../agent/subagent.js';
 
 export type AgentType = 'explore' | 'plan' | 'cad';
@@ -73,19 +72,26 @@ export async function handleTask(
       return { success: false, error: 'Python backend not available for CAD subagent.' };
     }
 
-    // Extract auth credentials from the provider
-    const auth: { api_key?: string | null; auth_token?: string | null } = {};
-    if (deps.provider instanceof AnthropicProvider) {
-      const creds = deps.provider.credentials;
-      auth.api_key = creds.apiKey;
-      auth.auth_token = creds.authToken;
-    }
+    // Build provider_config from generic credential info
+    const credInfo = deps.provider.getCredentialInfo();
+    const providerConfig: CadSubagentProviderConfig = {
+      provider: credInfo.provider,
+      api_key: credInfo.apiKey,
+      auth_token: credInfo.authToken,
+      base_url: credInfo.baseUrl,
+      aws_region: credInfo.awsRegion,
+      aws_profile: credInfo.awsProfile,
+    };
+
+    const cadModel = deps.settings.subagentModels.cad
+      ?? getDefaultSubagentModel(deps.settings.provider, 'cad');
 
     const req: CadSubagentRequest = {
       prompt,
       context,
       project_root: deps.projectRoot,
-      auth,
+      provider_config: providerConfig,
+      model: cadModel,
     };
 
     emit(makeEvent(EventType.STATUS, { message: 'Starting CAD subagent...' }));

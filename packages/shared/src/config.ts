@@ -21,8 +21,23 @@ export interface HookConfig {
   hooks: HookDefinition[];
 }
 
+export type ProviderType = 'anthropic' | 'openai' | 'ollama' | 'bedrock';
+
+export interface ProviderConfig {
+  apiKey: string | null;
+  baseUrl: string | null;
+  awsRegion: string | null;
+  awsProfile: string | null;
+}
+
+export interface SubagentModelOverrides {
+  explore: string | null;
+  plan: string | null;
+  cad: string | null;
+}
+
 export interface CadForgeSettings {
-  provider: 'anthropic' | 'ollama';
+  provider: ProviderType;
   model: string;
   maxTokens: number;
   temperature: number;
@@ -30,8 +45,47 @@ export interface CadForgeSettings {
   baseUrl: string | null;
   engineUrl: string | null;
   enginePort: number;
+  providerConfig: ProviderConfig;
+  subagentModels: SubagentModelOverrides;
   permissions: PermissionsConfig;
   hooks: HookConfig[];
+}
+
+export const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
+  apiKey: null,
+  baseUrl: null,
+  awsRegion: null,
+  awsProfile: null,
+};
+
+export const DEFAULT_SUBAGENT_MODELS: SubagentModelOverrides = {
+  explore: null,
+  plan: null,
+  cad: null,
+};
+
+/** Default model per provider. */
+export function getDefaultModel(provider: ProviderType): string {
+  switch (provider) {
+    case 'anthropic': return 'claude-sonnet-4-5-20250929';
+    case 'openai':    return 'gpt-4o';
+    case 'ollama':    return 'qwen2.5-coder:14b';
+    case 'bedrock':   return 'anthropic.claude-sonnet-4-5-20250929-v1:0';
+  }
+}
+
+/** Default subagent model per provider and role. */
+export function getDefaultSubagentModel(
+  provider: ProviderType,
+  role: 'explore' | 'plan' | 'cad',
+): string {
+  const defaults: Record<ProviderType, Record<string, string>> = {
+    anthropic: { explore: 'claude-haiku-4-5-20251001', plan: 'claude-sonnet-4-5-20250929', cad: 'claude-sonnet-4-5-20250929' },
+    openai:    { explore: 'gpt-4o-mini', plan: 'gpt-4o', cad: 'gpt-4o' },
+    ollama:    { explore: 'qwen2.5-coder:7b', plan: 'qwen2.5-coder:14b', cad: 'qwen2.5-coder:14b' },
+    bedrock:   { explore: 'anthropic.claude-haiku-4-5-20251001-v1:0', plan: 'anthropic.claude-sonnet-4-5-20250929-v1:0', cad: 'anthropic.claude-sonnet-4-5-20250929-v1:0' },
+  };
+  return defaults[provider][role];
 }
 
 /** Default settings matching Python defaults */
@@ -44,6 +98,8 @@ export const DEFAULT_SETTINGS: CadForgeSettings = {
   baseUrl: null,
   engineUrl: null,
   enginePort: 8741,
+  providerConfig: { ...DEFAULT_PROVIDER_CONFIG },
+  subagentModels: { ...DEFAULT_SUBAGENT_MODELS },
   permissions: {
     deny: ['Bash(rm:*)', 'Bash(sudo:*)', 'WriteFile(**/.env)'],
     allow: [
@@ -83,6 +139,27 @@ export function normalizeSettings(
   if (raw.engine_port !== undefined) result.enginePort = raw.engine_port as number;
   if (raw.permissions !== undefined) result.permissions = raw.permissions as PermissionsConfig;
   if (raw.hooks !== undefined) result.hooks = raw.hooks as HookConfig[];
+
+  // Nested objects: provider_config → providerConfig
+  if (raw.provider_config !== undefined) {
+    const pc = raw.provider_config as Record<string, unknown>;
+    result.providerConfig = {
+      apiKey: (pc.api_key as string | null) ?? null,
+      baseUrl: (pc.base_url as string | null) ?? null,
+      awsRegion: (pc.aws_region as string | null) ?? null,
+      awsProfile: (pc.aws_profile as string | null) ?? null,
+    };
+  }
+
+  // subagent_models → subagentModels
+  if (raw.subagent_models !== undefined) {
+    const sm = raw.subagent_models as Record<string, unknown>;
+    result.subagentModels = {
+      explore: (sm.explore as string | null) ?? null,
+      plan: (sm.plan as string | null) ?? null,
+      cad: (sm.cad as string | null) ?? null,
+    };
+  }
 
   return result;
 }

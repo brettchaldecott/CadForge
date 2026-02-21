@@ -144,7 +144,7 @@ export function Repl({ store, agent, model, slashCommands, projectRoot }: ReplPr
     }
 
     if (input.startsWith('/provider')) {
-      handleProvider(input, state);
+      handleProvider(input, state, agent);
       return;
     }
 
@@ -364,15 +364,32 @@ function showSessions(state: UIStore, agent: Agent): void {
   state.addAssistantMessage(lines.join('\n'));
 }
 
-function handleProvider(input: string, state: UIStore): void {
+function handleProvider(input: string, state: UIStore, agent: Agent): void {
+  const VALID_PROVIDERS = ['anthropic', 'openai', 'ollama', 'bedrock'] as const;
   const parts = input.split(/\s+/);
+
   if (parts.length === 1) {
-    state.addAssistantMessage('Use: /provider anthropic [model] or /provider ollama [model]');
+    // Show current provider info
+    const info = agent.settings.provider;
+    const model = agent.settings.model;
+    state.addAssistantMessage(
+      `Current provider: ${info}\nModel: ${model}\n\n` +
+      `Usage: /provider <${VALID_PROVIDERS.join('|')}> [model]`,
+    );
     return;
   }
-  // Provider switching requires agent mutation — show info for now
+
+  const providerName = parts[1] as typeof VALID_PROVIDERS[number];
+  if (!VALID_PROVIDERS.includes(providerName)) {
+    state.addAssistantMessage(
+      `Unknown provider: ${parts[1]}\nValid providers: ${VALID_PROVIDERS.join(', ')}`,
+    );
+    return;
+  }
+
+  const model = parts[2] ?? undefined; // optional model override
+  agent.switchProvider(providerName, model);
   state.addAssistantMessage(
-    'Provider switching during a session is not yet supported in the Ink UI.\n' +
-    'Set the provider in .cadforge/settings.json and restart.',
+    `Switched to ${providerName} provider.\nModel: ${agent.settings.model}`,
   );
 }
