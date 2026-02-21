@@ -1,6 +1,5 @@
 /**
  * Project root discovery and path helpers.
- * Mirrors utils/paths.py from the Python codebase.
  */
 
 import { existsSync, mkdirSync } from 'node:fs';

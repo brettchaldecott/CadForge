@@ -11,7 +11,7 @@ import { loadSettings } from '../config/settings.js';
 import type { AuthCredentials } from '../llm/auth.js';
 import { resolveAuthForProvider } from '../llm/auth.js';
 import { createProvider } from '../llm/factory.js';
-import type { ContentBlock, EventCallback, LLMProvider, LLMResponse } from '../llm/provider.js';
+import type { ContentBlock, EventCallback, LLMProvider } from '../llm/provider.js';
 import { ToolExecutor } from '../tools/executor.js';
 import { getToolDefinitions } from '../tools/registry.js';
 import { handleBash } from '../tools/bash.js';

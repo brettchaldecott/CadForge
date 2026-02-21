@@ -1,6 +1,5 @@
 /**
  * Agent event types — shared between Node CLI and Python backend.
- * Mirrors the Python EventType enum in core/events.py.
  */
 
 export enum EventType {
