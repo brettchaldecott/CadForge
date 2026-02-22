@@ -69,6 +69,55 @@ class DFMReport:
         }
 
 
+@dataclass
+class GeometricDiff:
+    """Comparison between two meshes."""
+    volume_delta_mm3: float = 0.0
+    volume_delta_pct: float = 0.0
+    surface_area_delta_mm2: float = 0.0
+    bbox_size_delta: dict[str, float] = field(default_factory=dict)
+    center_of_mass_delta: list[float] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "volume_delta_mm3": round(self.volume_delta_mm3, 2),
+            "volume_delta_pct": round(self.volume_delta_pct, 2),
+            "surface_area_delta_mm2": round(self.surface_area_delta_mm2, 2),
+            "bbox_size_delta": {k: round(v, 2) for k, v in self.bbox_size_delta.items()},
+            "center_of_mass_delta": [round(c, 2) for c in self.center_of_mass_delta],
+        }
+
+
+def compare_meshes(path_a: Path, path_b: Path) -> GeometricDiff:
+    """Compare two STL files using existing analyze_mesh().
+
+    Computes deltas in volume, surface area, bounding box, and center of mass.
+    """
+    a = analyze_mesh(path_a)
+    b = analyze_mesh(path_b)
+
+    vol_a = a.volume_mm3
+    vol_b = b.volume_mm3
+    vol_delta = vol_b - vol_a
+    vol_pct = (vol_delta / vol_a * 100.0) if vol_a != 0 else 0.0
+
+    bbox_delta = {}
+    for key in ("size_x", "size_y", "size_z"):
+        bbox_delta[key] = b.bounding_box.get(key, 0.0) - a.bounding_box.get(key, 0.0)
+
+    com_delta = []
+    for i in range(min(len(a.center_of_mass), len(b.center_of_mass))):
+        com_delta.append(b.center_of_mass[i] - a.center_of_mass[i])
+
+    return GeometricDiff(
+        volume_delta_mm3=vol_delta,
+        volume_delta_pct=vol_pct,
+        surface_area_delta_mm2=b.surface_area_mm2 - a.surface_area_mm2,
+        bbox_size_delta=bbox_delta,
+        center_of_mass_delta=com_delta,
+    )
+
+
 def analyze_mesh(path: Path) -> MeshAnalysis:
     """Analyze an STL/3MF mesh file.
 

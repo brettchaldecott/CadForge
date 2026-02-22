@@ -159,6 +159,22 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
   },
   {
     definition: {
+      name: 'RenderModel',
+      description: 'Render a 3D model (STL file) to PNG images from multiple camera angles',
+      input_schema: {
+        type: 'object',
+        properties: {
+          stl_path: { type: 'string', description: 'Path to the STL file to render' },
+          output_dir: { type: 'string', description: 'Output directory for PNGs (defaults to same as STL)' },
+          include_base64: { type: 'boolean', description: 'Include base64 image data in response' },
+        },
+        required: ['stl_path'],
+      },
+    },
+    location: 'remote',
+  },
+  {
+    definition: {
       name: 'GetPrinter',
       description: 'Get the active printer profile',
       input_schema: {
@@ -175,7 +191,7 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
       input_schema: {
         type: 'object',
         properties: {
-          agent_type: { type: 'string', enum: ['explore', 'plan', 'cad'], description: 'Subagent type' },
+          agent_type: { type: 'string', enum: ['explore', 'plan', 'cad', 'design', 'competitive'], description: 'Subagent type' },
           prompt: { type: 'string', description: 'Task prompt' },
           context: { type: 'string', description: 'Additional context' },
         },

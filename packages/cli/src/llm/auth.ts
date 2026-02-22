@@ -191,6 +191,9 @@ export function resolveAuthForProvider(
     case 'bedrock':
       // AWS SDK uses its own credential chain (env vars, profiles, instance roles)
       return createEmptyCredentials('none');
+    case 'litellm':
+      // LiteLLM reads API keys from environment variables based on model prefix
+      return createEmptyCredentials('none');
   }
 }
 

@@ -61,6 +61,16 @@ export interface UIState {
   // Usage
   totalInputTokens: number;
   totalOutputTokens: number;
+
+  // Design tracking
+  activeDesignId: string | null;
+  iterationHistory: { round: number; approved: boolean }[];
+
+  // Competitive pipeline tracking
+  competitiveStatus: string | null;
+  competitiveProposals: { model: string; status: string; score?: number }[];
+  competitiveRound: number;
+  competitiveApprovalPending: boolean;
 }
 
 export interface UIActions {
@@ -119,6 +129,12 @@ const initialState: UIState = {
   error: null,
   totalInputTokens: 0,
   totalOutputTokens: 0,
+  activeDesignId: null,
+  iterationHistory: [],
+  competitiveStatus: null,
+  competitiveProposals: [],
+  competitiveRound: 0,
+  competitiveApprovalPending: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -303,6 +319,158 @@ export function createEventHandler(store: ReturnType<typeof createUIStore>) {
 
       case EventType.MODE_CHANGE:
         state.setMode((event.data.mode as InteractionMode) ?? 'agent');
+        break;
+
+      // Pipeline events → status bar updates
+      case EventType.PIPELINE_STEP:
+        state.setStatus(
+          `Pipeline: ${(event.data.step as string) ?? 'working'}`,
+        );
+        break;
+
+      case EventType.PIPELINE_ROUND:
+        state.setStatus(
+          `Pipeline round ${(event.data.round as number) ?? '?'}/${(event.data.max_rounds as number) ?? '?'}`,
+        );
+        break;
+
+      case EventType.PIPELINE_IMAGE:
+        state.addAssistantMessage(
+          `Rendered: ${(event.data.path as string) ?? 'image'}`,
+        );
+        break;
+
+      case EventType.PIPELINE_VERDICT: {
+        const verdict = (event.data.verdict as string) ?? '';
+        const approved = verdict.toUpperCase().includes('APPROVED');
+        state.setStatus(
+          approved ? 'Pipeline: APPROVED' : 'Pipeline: revision requested',
+        );
+        break;
+      }
+
+      case EventType.DESIGN_UPDATED:
+        store.setState({
+          activeDesignId: (event.data.id as string) ?? null,
+        });
+        state.setStatus(
+          `Design ${(event.data.id as string)?.slice(0, 8) ?? '?'}: ${(event.data.status as string) ?? 'updated'}`,
+        );
+        break;
+
+      case EventType.ITERATION_SAVED:
+        store.setState((s) => ({
+          iterationHistory: [
+            ...s.iterationHistory,
+            {
+              round: (event.data.round as number) ?? 0,
+              approved: (event.data.approved as boolean) ?? false,
+            },
+          ],
+        }));
+        state.setStatus(
+          `Iteration ${(event.data.round as number) ?? '?'} saved`,
+        );
+        break;
+
+      case EventType.LEARNINGS_INDEXED:
+        state.setStatus(
+          `Learnings indexed (${(event.data.chunk_count as number) ?? 0} chunks)`,
+        );
+        break;
+
+      // ── Competitive pipeline events ──
+
+      case EventType.COMPETITIVE_STATUS:
+        store.setState({
+          competitiveStatus: (event.data.status as string) ?? null,
+        });
+        state.setStatus(
+          `Competitive: ${(event.data.status as string) ?? 'working'}`,
+        );
+        break;
+
+      case EventType.COMPETITIVE_ROUND:
+        store.setState({
+          competitiveRound: (event.data.round as number) ?? 0,
+        });
+        state.setStatus(
+          `Competitive round ${(event.data.round as number) ?? '?'}/${(event.data.max_rounds as number) ?? '?'}`,
+        );
+        break;
+
+      case EventType.COMPETITIVE_SUPERVISOR:
+        state.setStatus(
+          `Competitive: Supervisor ${(event.data.status as string) ?? 'working'}`,
+        );
+        break;
+
+      case EventType.COMPETITIVE_PROPOSAL: {
+        const model = (event.data.model as string) ?? '';
+        const proposalStatus = (event.data.status as string) ?? '';
+        store.setState((s) => {
+          const existing = s.competitiveProposals.filter((p) => p.model !== model);
+          return {
+            competitiveProposals: [
+              ...existing,
+              { model, status: proposalStatus },
+            ],
+          };
+        });
+        state.setStatus(`Competitive: ${model} — ${proposalStatus}`);
+        break;
+      }
+
+      case EventType.COMPETITIVE_DEBATE:
+        state.setStatus(
+          `Competitive: Debate ${(event.data.status as string) ?? 'running'}`,
+        );
+        break;
+
+      case EventType.COMPETITIVE_SANDBOX:
+        state.setStatus(
+          `Competitive: Sandbox eval ${(event.data.status as string) ?? 'running'}`,
+        );
+        break;
+
+      case EventType.COMPETITIVE_FIDELITY: {
+        const fScore = (event.data.score as number) ?? 0;
+        store.setState((s) => {
+          const pid = (event.data.proposal_id as string) ?? '';
+          return {
+            competitiveProposals: s.competitiveProposals.map((p) =>
+              p.model === pid ? { ...p, score: fScore } : p,
+            ),
+          };
+        });
+        state.setStatus(
+          `Competitive: Fidelity score ${fScore}`,
+        );
+        break;
+      }
+
+      case EventType.COMPETITIVE_MERGER:
+        state.setStatus(
+          `Competitive: Merger ${(event.data.status as string) ?? 'running'}`,
+        );
+        break;
+
+      case EventType.COMPETITIVE_LEARNING:
+        state.setStatus(
+          `Competitive: Learning ${(event.data.status as string) ?? 'running'}`,
+        );
+        break;
+
+      case EventType.COMPETITIVE_APPROVAL_REQUESTED:
+        store.setState({ competitiveApprovalPending: true });
+        state.setStatus('Competitive: Awaiting human approval');
+        break;
+
+      case EventType.COMPETITIVE_APPROVAL_RESPONSE:
+        store.setState({ competitiveApprovalPending: false });
+        state.setStatus(
+          `Competitive: Approval ${(event.data.approved as boolean) ? 'granted' : 'denied'}`,
+        );
         break;
     }
   };

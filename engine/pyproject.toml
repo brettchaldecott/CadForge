@@ -21,6 +21,9 @@ dependencies = [
 cad = [
     "cadquery>=2.4.0",
 ]
+build123d = [
+    "build123d>=0.7.0",
+]
 mesh = [
     "trimesh>=3.20.0",
 ]
@@ -28,6 +31,8 @@ rag = [
     "lancedb>=0.4.0",
     "sentence-transformers>=2.2.0",
     "pyarrow>=14.0.0",
+    "beautifulsoup4>=4.12.0",
+    "httpx>=0.25.0",
 ]
 viewer = [
     "pyvista>=0.43.0",
@@ -36,12 +41,13 @@ agent = [
     "anthropic>=0.40.0",
     "openai>=1.0.0",
     "boto3>=1.28.0",
+    "litellm>=1.40.0",
 ]
 full = [
     "cadforge-engine[mesh,rag,viewer,agent]",
 ]
 all = [
-    "cadforge-engine[cad,mesh,rag,viewer,agent]",
+    "cadforge-engine[cad,build123d,mesh,rag,viewer,agent]",
 ]
 dev = [
     "pytest>=7.0",

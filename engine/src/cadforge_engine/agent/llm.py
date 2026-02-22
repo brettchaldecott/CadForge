@@ -261,6 +261,81 @@ class BedrockSubagentClient:
 
 
 # ---------------------------------------------------------------------------
+# LiteLLM (multi-provider via litellm library)
+# ---------------------------------------------------------------------------
+
+class LiteLLMSubagentClient:
+    """LiteLLM-based client supporting any model via litellm routing.
+
+    LiteLLM returns OpenAI-format responses, so we reuse the existing
+    _translate_messages(), _translate_tools(), and _normalize_openai_response()
+    helpers to convert to/from our Anthropic-like internal format.
+    """
+
+    def __init__(
+        self,
+        model: str = "minimax/MiniMax-M2.5",
+        max_tokens: int = 8192,
+        api_key: str | None = None,
+    ) -> None:
+        self.model = model
+        self.max_tokens = max_tokens
+        self._api_key = api_key  # optional override; LiteLLM reads env vars by default
+
+    def call(
+        self,
+        messages: list[dict[str, Any]],
+        system: str,
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Sync call via litellm.completion()."""
+        import litellm
+
+        oai_messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        oai_messages.extend(_translate_messages(messages))
+        oai_tools = _translate_tools(tools) if tools else None
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "messages": oai_messages,
+        }
+        if oai_tools:
+            kwargs["tools"] = oai_tools
+        if self._api_key:
+            kwargs["api_key"] = self._api_key
+
+        response = litellm.completion(**kwargs)
+        return _normalize_openai_response(response)
+
+    async def acall(
+        self,
+        messages: list[dict[str, Any]],
+        system: str,
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Async call via litellm.acompletion() — needed for asyncio.gather parallelism."""
+        import litellm
+
+        oai_messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        oai_messages.extend(_translate_messages(messages))
+        oai_tools = _translate_tools(tools) if tools else None
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "messages": oai_messages,
+        }
+        if oai_tools:
+            kwargs["tools"] = oai_tools
+        if self._api_key:
+            kwargs["api_key"] = self._api_key
+
+        response = await litellm.acompletion(**kwargs)
+        return _normalize_openai_response(response)
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -325,6 +400,12 @@ def create_subagent_client(
             profile=_get("aws_profile"),
             model=model,
             max_tokens=max_tokens,
+        )
+    elif provider == "litellm":
+        return LiteLLMSubagentClient(  # type: ignore[return-value]
+            model=model,
+            max_tokens=max_tokens,
+            api_key=_get("api_key"),
         )
     else:
         raise ValueError(f"Unknown provider: {provider}")
@@ -397,10 +478,23 @@ def _translate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "content": r.get("content", ""),
                     })
             else:
-                text = "\n".join(
-                    b.get("text", "") for b in content if b.get("type") == "text"
-                )
-                result.append({"role": "user", "content": text})
+                # Handle mixed text + image content for OpenAI
+                oai_parts: list[dict[str, Any]] = []
+                for b in content:
+                    if b.get("type") == "text":
+                        oai_parts.append({"type": "text", "text": b["text"]})
+                    elif b.get("type") == "image":
+                        src = b.get("source", {})
+                        media = src.get("media_type", "image/png")
+                        data = src.get("data", "")
+                        oai_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{media};base64,{data}"},
+                        })
+                if oai_parts:
+                    result.append({"role": "user", "content": oai_parts})
+                else:
+                    result.append({"role": "user", "content": ""})
         else:
             result.append({"role": role, "content": str(content)})
 
@@ -471,6 +565,17 @@ def _translate_messages_for_bedrock(
         for block in content:
             if block.get("type") == "text":
                 bedrock_content.append({"text": block["text"]})
+            elif block.get("type") == "image":
+                import base64
+                src = block.get("source", {})
+                data = src.get("data", "")
+                fmt = src.get("media_type", "image/png").split("/")[-1]
+                bedrock_content.append({
+                    "image": {
+                        "format": fmt,
+                        "source": {"bytes": base64.b64decode(data)},
+                    }
+                })
             elif block.get("type") == "tool_use":
                 bedrock_content.append({
                     "toolUse": {

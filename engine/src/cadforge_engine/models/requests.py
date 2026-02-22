@@ -50,9 +50,27 @@ class VaultIndexRequest(BaseModel):
     incremental: bool = Field(default=False, description="Only re-index changed files")
 
 
+class CompetitivePipelineConfig(BaseModel):
+    """Configuration for the competitive multi-agent pipeline."""
+    supervisor: dict[str, str] = Field(default_factory=lambda: {"model": "minimax/MiniMax-M2.5"})
+    judge: dict[str, str] = Field(default_factory=lambda: {"model": "zai/glm-5"})
+    merger: dict[str, str] = Field(default_factory=lambda: {"model": "minimax/MiniMax-M2.5"})
+    sandbox_assistant: dict[str, str] = Field(default_factory=lambda: {"model": "xai/grok-4-1-fast-reasoning"})
+    proposal_agents: list[dict[str, str]] = Field(default_factory=lambda: [
+        {"model": "minimax/MiniMax-M2.5"},
+        {"model": "zai/glm-5"},
+        {"model": "dashscope/qwen3-coder-next"},
+        {"model": "xai/grok-4-1-fast-reasoning"},
+    ])
+    fidelity_threshold: float = 95.0
+    max_refinement_loops: int = 3
+    human_approval_required: bool = False
+    debate_enabled: bool = True
+
+
 class CadSubagentProviderConfig(BaseModel):
     """Provider configuration forwarded from the Node CLI."""
-    provider: Literal["anthropic", "openai", "ollama", "bedrock"] = "anthropic"
+    provider: Literal["anthropic", "openai", "ollama", "bedrock", "litellm"] = "anthropic"
     api_key: str | None = None
     auth_token: str | None = None
     base_url: str | None = None

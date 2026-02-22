@@ -35,5 +35,13 @@ export function createProvider(
         ctx.providerConfig.awsRegion ?? 'us-east-1',
         ctx.providerConfig.awsProfile,
       );
+    case 'litellm':
+      // LiteLLM is used server-side only (Python engine). For CLI provider,
+      // fall back to OpenAI-compatible since LiteLLM uses OpenAI format.
+      return new OpenAICompatibleProvider(
+        'litellm',
+        ctx.credentials.apiKey ?? '',
+        ctx.providerConfig.baseUrl ?? 'https://api.openai.com/v1',
+      );
   }
 }
