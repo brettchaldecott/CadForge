@@ -64,6 +64,10 @@ class SandboxEvaluation(BaseModel):
     bounding_box: dict[str, float] = Field(default_factory=dict)
     center_of_mass: list[float] = Field(default_factory=list)
     dfm_issues: list[str] = Field(default_factory=list)
+    dfm_report_data: dict[str, Any] = Field(default_factory=dict)
+    fea_risk_level: str = ""
+    fea_risk_score: float = 0.0
+    fea_notes: list[str] = Field(default_factory=list)
     execution_error: str | None = None
     stl_path: str | None = None
     png_paths: list[str] = Field(default_factory=list)
@@ -77,6 +81,9 @@ class FidelityScore(BaseModel):
     text_similarity: float = 0.0
     geometric_accuracy: float = 0.0
     manufacturing_viability: float = 0.0
+    algorithmic_score: float = 0.0
+    llm_score: float = 0.0
+    algorithmic_details: dict[str, Any] = Field(default_factory=dict)
     reasoning: str = ""
     passed: bool = False
 
@@ -120,6 +127,8 @@ class CompetitiveDesignSpec(BaseModel):
     final_stl_path: str | None = None
     learnings_indexed: bool = False
     pipeline_config: dict[str, Any] = Field(default_factory=dict)
+    version_history: list[dict[str, Any]] = Field(default_factory=list)
+    fidelity_score_history: list[dict[str, Any]] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
