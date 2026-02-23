@@ -19,22 +19,29 @@ logger = logging.getLogger(__name__)
 MAX_ITERATIONS = 20
 
 CAD_SYSTEM_PROMPT = """\
-You are the CadForge CAD subagent. You generate and refine 3D models using CadQuery.
+You are the CadForge CAD subagent. You generate and refine 3D models using CadQuery or build123d.
+
+Library choice:
+- CadQuery (`cq`): Mature, fluent workplane API. Best for parametric parts with features on faces.
+- build123d (`bd`): Modern Python-native API with context managers. Best for complex topology, assemblies, and builder patterns.
+- Both are available in the sandbox. Choose whichever fits the task best.
 
 Rules:
-- Assign the final workpiece to `result` in your CadQuery code
-- Use `cq` as the CadQuery namespace, `np` for numpy
+- Assign the final workpiece to `result` in your code
+- CadQuery: use `cq` namespace, result should be a `cq.Workplane`
+- build123d: use `bd` namespace or top-level names (Box, Cylinder, etc.), result should be a `Part`, `Compound`, or `Shape`
+- Use `np` for numpy
 - After generating code, analyze the mesh to verify correctness
 - If the mesh has issues, refine the code and try again
 - Keep code clean and well-commented
 
-Available tools: ExecuteCadQuery, AnalyzeMesh, ExportModel, ReadFile, SearchVault
+Available tools: ExecuteCadQuery, AnalyzeMesh, RenderModel, ExportModel, ReadFile, SearchVault
 """
 
 CAD_TOOLS: list[dict[str, Any]] = [
     {
         "name": "ExecuteCadQuery",
-        "description": "Execute CadQuery code to create or modify 3D models. Assign final workpiece to `result`.",
+        "description": "Execute CadQuery or build123d code to create or modify 3D models. Assign final workpiece to `result`.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -67,6 +74,19 @@ CAD_TOOLS: list[dict[str, Any]] = [
                 "name": {"type": "string", "description": "Output filename"},
             },
             "required": ["source"],
+        },
+    },
+    {
+        "name": "RenderModel",
+        "description": "Render a 3D model (STL file) to PNG images from multiple camera angles for visual inspection.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "stl_path": {"type": "string", "description": "Path to the STL file to render"},
+                "output_dir": {"type": "string", "description": "Output directory for PNGs"},
+                "include_base64": {"type": "boolean", "description": "Include base64 image data"},
+            },
+            "required": ["stl_path"],
         },
     },
     {
@@ -156,6 +176,21 @@ def _handle_tool(
                 return {"success": False, "error": "Use ExecuteCadQuery with format='step' instead"}
             else:
                 return {"success": False, "error": f"Unsupported export format: {fmt}"}
+
+        elif tool_name == "RenderModel":
+            from cadforge_engine.domain.renderer import render_stl_to_png
+
+            stl = Path(tool_input["stl_path"])
+            if not stl.is_absolute():
+                stl = project_root / stl
+            out_dir = Path(tool_input["output_dir"]) if tool_input.get("output_dir") else stl.parent
+            png_base = out_dir / stl.stem
+            paths = render_stl_to_png(stl, png_base)
+            return {
+                "success": True,
+                "images": [str(p) for p in paths],
+                "message": f"Rendered {len(paths)} views",
+            }
 
         elif tool_name == "ReadFile":
             path = Path(tool_input["path"])

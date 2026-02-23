@@ -26,7 +26,7 @@ export function modePromptPrefix(mode: InteractionMode): string {
 
 /** Read-only tools allowed in plan mode */
 const PLAN_MODE_TOOLS = new Set([
-  'ReadFile', 'ListFiles', 'SearchVault', 'Bash', 'GetPrinter', 'Task',
+  'ReadFile', 'ListFiles', 'SearchVault', 'Bash', 'GetPrinter', 'Task', 'RenderModel',
 ]);
 
 /**

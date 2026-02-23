@@ -71,10 +71,10 @@ async def create_competitive(req: CreateCompetitiveRequest) -> StreamingResponse
     store.save(design)
 
     async def event_generator():
-        from cadforge_engine.agent.competitive import run_competitive_pipeline
+        from cadforge_engine.agent.competitive_graph import run_competitive_graph
 
         try:
-            async for event in run_competitive_pipeline(
+            async for event in run_competitive_graph(
                 design=design,
                 store=store,
                 project_root=Path(req.project_root),
@@ -111,10 +111,10 @@ async def execute_competitive(
     config = req.pipeline_config.model_dump() if req.pipeline_config else design.pipeline_config
 
     async def event_generator():
-        from cadforge_engine.agent.competitive import run_competitive_pipeline
+        from cadforge_engine.agent.competitive_graph import run_competitive_graph
 
         try:
-            async for event in run_competitive_pipeline(
+            async for event in run_competitive_graph(
                 design=design,
                 store=store,
                 project_root=Path(req.project_root),
@@ -141,8 +141,8 @@ async def execute_competitive(
 @router.post("/{design_id}/approve")
 async def approve_competitive(
     design_id: str, req: ApprovalRequest, project_root: str
-) -> dict[str, Any]:
-    """Submit human approval/rejection for a competitive design."""
+) -> StreamingResponse:
+    """Submit human approval/rejection — resumes the interrupted LangGraph."""
     store = _get_store(project_root)
     design = store.get(design_id)
     if not design:
@@ -153,15 +153,36 @@ async def approve_competitive(
             detail=f"Design is not awaiting approval (status: {design.status.value})",
         )
 
-    if req.approved:
-        design.status = CompetitiveDesignStatus.COMPLETED
-    else:
-        design.status = CompetitiveDesignStatus.FAILED
-        if req.feedback:
-            design.constraints["rejection_feedback"] = req.feedback
+    async def event_generator():
+        from langgraph.types import Command
+        from cadforge_engine.agent.competitive_graph import build_competitive_graph
 
-    store.save(design)
-    return design.model_dump()
+        graph = build_competitive_graph()
+        config = {"configurable": {"thread_id": design_id}}
+
+        try:
+            async for chunk in graph.astream(
+                Command(resume={"approved": req.approved, "feedback": req.feedback}),
+                config,
+                stream_mode="updates",
+            ):
+                for node_name, output in chunk.items():
+                    for ev in output.get("sse_events", []):
+                        yield _sse_event(ev["event"], ev["data"])
+        except Exception as e:
+            logger.exception("Approval resume error")
+            yield _sse_event("completion", {"text": f"Approval error: {e}"})
+            yield _sse_event("done", {})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{design_id}")
@@ -190,3 +211,12 @@ async def get_proposals(design_id: str, project_root: str) -> list[dict[str, Any
                 **p.model_dump(),
             })
     return all_proposals
+
+
+@router.get("/graph")
+async def get_graph_viz() -> dict[str, str]:
+    """Return Mermaid diagram of the competitive pipeline graph."""
+    from cadforge_engine.agent.competitive_graph import build_competitive_graph
+
+    graph = build_competitive_graph()
+    return {"mermaid": graph.get_graph().draw_mermaid()}

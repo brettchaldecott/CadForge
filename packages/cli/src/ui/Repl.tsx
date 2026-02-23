@@ -10,6 +10,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Box, Text, useInput, useStdin, useApp } from 'ink';
 import { useStore } from 'zustand';
 import type { StoreApi } from 'zustand';
+import { getDefaultSubagentModel } from '@cadforge/shared';
 import type { Agent } from '../agent/agent.js';
 import type { InteractionMode } from '../agent/modes.js';
 import { nextMode, hasProceedIntent, MODE_COLORS } from '../agent/modes.js';
@@ -106,7 +107,7 @@ export function Repl({ store, agent, model, slashCommands, projectRoot }: ReplPr
     }
 
     if (input === '/help') {
-      showHelp(state, mode, slashCommands);
+      showHelp(state, mode, slashCommands, agent);
       return;
     }
 
@@ -313,7 +314,12 @@ function showHelp(
   state: UIStore,
   mode: InteractionMode,
   slashCommands: Map<string, Skill>,
+  agent: Agent,
 ): void {
+  const settings = agent.settings;
+  const provider = settings.provider;
+  const sm = settings.subagentModels;
+
   let help = `Current Mode: ${mode}\n\n` +
     'Modes:\n' +
     '  /agent  — Full agentic loop with all tools\n' +
@@ -331,6 +337,13 @@ function showHelp(
     '  Ctrl+C    — Cancel running agent / exit\n' +
     '  !command  — Run shell command directly\n' +
     '  \\         — Continue on next line\n';
+
+  help += '\nSubagent Models:\n' +
+    `  explore — ${sm.explore ?? getDefaultSubagentModel(provider, 'explore')}${sm.explore ? '' : ' (default)'}\n` +
+    `  plan    — ${sm.plan ?? getDefaultSubagentModel(provider, 'plan')}${sm.plan ? '' : ' (default)'}\n` +
+    `  cad     — ${sm.cad ?? getDefaultSubagentModel(provider, 'cad')}${sm.cad ? '' : ' (default)'}\n` +
+    '  Configure in ~/.cadforge/settings.json or .cadforge/settings.json:\n' +
+    '  { "subagent_models": { "explore": "model", "plan": "model", "cad": "model" } }\n';
 
   if (slashCommands.size > 0) {
     help += '\nSkills:\n';

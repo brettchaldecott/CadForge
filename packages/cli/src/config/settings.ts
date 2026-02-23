@@ -7,6 +7,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { z } from 'zod';
 import {
   type CadForgeSettings,
+  DEFAULT_COMPETITIVE_PIPELINE,
   DEFAULT_SETTINGS,
   normalizeSettings,
 } from '@cadforge/shared';
@@ -32,7 +33,7 @@ const SubagentModelsSchema = z.object({
 }).optional();
 
 const SettingsSchema = z.object({
-  provider: z.enum(['anthropic', 'openai', 'ollama', 'bedrock']).optional(),
+  provider: z.enum(['anthropic', 'openai', 'ollama', 'bedrock', 'litellm']).optional(),
   model: z.string().optional(),
   max_tokens: z.number().int().positive().optional(),
   temperature: z.number().min(0).max(1).optional(),
@@ -42,6 +43,18 @@ const SettingsSchema = z.object({
   engine_port: z.number().int().positive().optional(),
   provider_config: ProviderConfigSchema,
   subagent_models: SubagentModelsSchema,
+  competitive_pipeline: z.object({
+    enabled: z.boolean().optional(),
+    supervisor: z.object({ model: z.string() }).optional(),
+    judge: z.object({ model: z.string() }).optional(),
+    merger: z.object({ model: z.string() }).optional(),
+    sandbox_assistant: z.object({ model: z.string() }).optional(),
+    proposal_agents: z.array(z.object({ model: z.string() })).optional(),
+    fidelity_threshold: z.number().optional(),
+    max_refinement_loops: z.number().optional(),
+    human_approval_required: z.boolean().optional(),
+    debate_enabled: z.boolean().optional(),
+  }).optional(),
   permissions: PermissionsSchema.optional(),
   hooks: z.array(z.record(z.unknown())).optional(),
 });
@@ -113,6 +126,18 @@ export function loadSettings(projectRoot?: string): CadForgeSettings {
       explore: DEFAULT_SETTINGS.subagentModels.explore,
       plan: DEFAULT_SETTINGS.subagentModels.plan,
       cad: DEFAULT_SETTINGS.subagentModels.cad,
+    },
+    competitive_pipeline: {
+      enabled: DEFAULT_COMPETITIVE_PIPELINE.enabled,
+      supervisor: DEFAULT_COMPETITIVE_PIPELINE.supervisor,
+      judge: DEFAULT_COMPETITIVE_PIPELINE.judge,
+      merger: DEFAULT_COMPETITIVE_PIPELINE.merger,
+      sandbox_assistant: DEFAULT_COMPETITIVE_PIPELINE.sandboxAssistant,
+      proposal_agents: DEFAULT_COMPETITIVE_PIPELINE.proposalAgents,
+      fidelity_threshold: DEFAULT_COMPETITIVE_PIPELINE.fidelityThreshold,
+      max_refinement_loops: DEFAULT_COMPETITIVE_PIPELINE.maxRefinementLoops,
+      human_approval_required: DEFAULT_COMPETITIVE_PIPELINE.humanApprovalRequired,
+      debate_enabled: DEFAULT_COMPETITIVE_PIPELINE.debateEnabled,
     },
     permissions: DEFAULT_SETTINGS.permissions,
     hooks: DEFAULT_SETTINGS.hooks,

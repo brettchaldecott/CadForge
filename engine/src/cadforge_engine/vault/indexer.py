@@ -197,6 +197,97 @@ def _index_fallback(project_root: Path, chunks: list) -> dict[str, Any]:
     return {"backend": "json_fallback"}
 
 
+def get_url_manifest_path(project_root: Path) -> Path:
+    """Path to the URL hash manifest."""
+    lance_dir = project_root / ".lance"
+    return lance_dir / "url_manifest.json"
+
+
+def load_url_manifest(project_root: Path) -> dict[str, str]:
+    """Load the URL content hash manifest (URL → content hash)."""
+    path = get_url_manifest_path(project_root)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_url_manifest(project_root: Path, manifest: dict[str, str]) -> None:
+    """Save the URL content hash manifest."""
+    path = get_url_manifest_path(project_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def index_urls(
+    project_root: Path,
+    chunks: list,
+) -> dict[str, Any]:
+    """Index URL-sourced chunks into the vault LanceDB table.
+
+    Args:
+        project_root: Project root directory.
+        chunks: List of VaultChunk objects from URL scraping.
+
+    Returns:
+        Dict with indexing stats.
+    """
+    if not chunks:
+        return {"success": True, "chunks_created": 0, "backend": "none"}
+
+    # Update URL manifest
+    url_manifest = load_url_manifest(project_root)
+    for chunk in chunks:
+        url = chunk.metadata.get("source_url", "")
+        if url:
+            from cadforge_engine.vault.scraper import compute_url_hash
+            url_manifest[url] = compute_url_hash(url, chunk.content)
+    save_url_manifest(project_root, url_manifest)
+
+    # Index into LanceDB or fallback
+    try:
+        stats = _index_with_lancedb(project_root, chunks, [], False)
+    except ImportError:
+        stats = _index_fallback(project_root, chunks)
+
+    return {
+        "success": True,
+        "chunks_created": len(chunks),
+        **stats,
+    }
+
+
+def index_chunks(project_root: Path, chunks: list) -> dict[str, Any]:
+    """Index arbitrary VaultChunk objects into the vault.
+
+    Appends chunks to the existing LanceDB table (not a full rebuild),
+    preserving all existing vault content. Used for learning extraction
+    and other non-file-based chunk sources.
+
+    Args:
+        project_root: Project root directory.
+        chunks: List of VaultChunk objects to index.
+
+    Returns:
+        Dict with indexing stats.
+    """
+    if not chunks:
+        return {"success": True, "chunks_created": 0, "backend": "none"}
+
+    try:
+        stats = _index_with_lancedb(project_root, chunks, [], False)
+    except ImportError:
+        stats = _index_fallback(project_root, chunks)
+
+    return {
+        "success": True,
+        "chunks_created": len(chunks),
+        **stats,
+    }
+
+
 def is_index_stale(project_root: Path) -> bool:
     """Check if the vault index needs updating."""
     current = compute_current_hashes(project_root)

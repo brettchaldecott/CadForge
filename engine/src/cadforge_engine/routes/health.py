@@ -19,6 +19,11 @@ def _detect_capabilities() -> list[str]:
     except Exception:
         pass
     try:
+        import build123d  # noqa: F401
+        caps.append("build123d")
+    except Exception:
+        pass
+    try:
         import trimesh  # noqa: F401
         caps.append("mesh")
     except Exception:

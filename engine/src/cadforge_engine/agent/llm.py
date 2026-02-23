@@ -289,7 +289,13 @@ class LiteLLMSubagentClient:
         tools: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Sync call via litellm.completion()."""
-        import litellm
+        try:
+            import litellm
+        except ImportError:
+            raise RuntimeError(
+                "litellm is required for LiteLLMSubagentClient. "
+                "Install with: pip install cadforge-engine[agent]"
+            )
 
         oai_messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
         oai_messages.extend(_translate_messages(messages))
@@ -315,7 +321,13 @@ class LiteLLMSubagentClient:
         tools: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Async call via litellm.acompletion() — needed for asyncio.gather parallelism."""
-        import litellm
+        try:
+            import litellm
+        except ImportError:
+            raise RuntimeError(
+                "litellm is required for LiteLLMSubagentClient. "
+                "Install with: pip install cadforge-engine[agent]"
+            )
 
         oai_messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
         oai_messages.extend(_translate_messages(messages))

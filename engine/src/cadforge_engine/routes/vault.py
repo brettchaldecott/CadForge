@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from pydantic import BaseModel, Field
+
 from cadforge_engine.models.requests import VaultSearchRequest, VaultIndexRequest
 from cadforge_engine.models.responses import (
     VaultSearchResponse,
@@ -85,6 +87,47 @@ def _fallback_search(
         results=results,
         note="fallback search" + (f" (original error: {error})" if error else ""),
     )
+
+
+class VaultIngestUrlsRequest(BaseModel):
+    """Request to ingest documentation URLs into the vault."""
+    urls: list[str] = Field(..., description="URLs to scrape")
+    source_name: str = Field(..., description="Name identifying the documentation source")
+    project_root: str = Field(..., description="Project root directory path")
+
+
+class VaultIngestUrlsResponse(BaseModel):
+    """Response from URL ingestion."""
+    success: bool
+    urls_scraped: int = 0
+    chunks_created: int = 0
+    error: str | None = None
+
+
+@router.post("/ingest-urls", response_model=VaultIngestUrlsResponse)
+async def ingest_urls_endpoint(req: VaultIngestUrlsRequest) -> VaultIngestUrlsResponse:
+    """Scrape documentation URLs and index into the vault."""
+    project_root = Path(req.project_root)
+
+    try:
+        from cadforge_engine.vault.scraper import scrape_documentation
+        from cadforge_engine.vault.indexer import index_urls
+
+        chunks = scrape_documentation(req.urls, req.source_name)
+        stats = index_urls(project_root, chunks)
+
+        return VaultIngestUrlsResponse(
+            success=True,
+            urls_scraped=len(req.urls),
+            chunks_created=stats.get("chunks_created", 0),
+        )
+    except ImportError as e:
+        return VaultIngestUrlsResponse(
+            success=False,
+            error=f"Missing dependencies (httpx, beautifulsoup4): {e}",
+        )
+    except Exception as e:
+        return VaultIngestUrlsResponse(success=False, error=str(e))
 
 
 @router.post("/index", response_model=VaultIndexResponse)
