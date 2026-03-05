@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' npx jest",
     "dev": "tsc --watch",
     "lint": "eslint src/"
   },
