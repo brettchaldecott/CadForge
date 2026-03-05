@@ -31,14 +31,14 @@ class MeshAnalysis:
     def to_dict(self) -> dict[str, Any]:
         return {
             "file_path": self.file_path,
-            "is_watertight": self.is_watertight,
-            "volume_mm3": round(self.volume_mm3, 2),
-            "volume_cm3": round(self.volume_cm3, 2),
-            "surface_area_mm2": round(self.surface_area_mm2, 2),
-            "triangle_count": self.triangle_count,
-            "vertex_count": self.vertex_count,
-            "bounding_box": self.bounding_box,
-            "center_of_mass": [round(c, 2) for c in self.center_of_mass],
+            "is_watertight": bool(self.is_watertight),
+            "volume_mm3": float(round(self.volume_mm3, 2)),
+            "volume_cm3": float(round(self.volume_cm3, 2)),
+            "surface_area_mm2": float(round(self.surface_area_mm2, 2)),
+            "triangle_count": int(self.triangle_count),
+            "vertex_count": int(self.vertex_count),
+            "bounding_box": {k: float(v) for k, v in self.bounding_box.items()},
+            "center_of_mass": [float(round(c, 2)) for c in self.center_of_mass],
             "issues": self.issues,
         }
 
@@ -84,11 +84,11 @@ class GeometricDiff:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "volume_delta_mm3": round(self.volume_delta_mm3, 2),
-            "volume_delta_pct": round(self.volume_delta_pct, 2),
-            "surface_area_delta_mm2": round(self.surface_area_delta_mm2, 2),
-            "bbox_size_delta": {k: round(v, 2) for k, v in self.bbox_size_delta.items()},
-            "center_of_mass_delta": [round(c, 2) for c in self.center_of_mass_delta],
+            "volume_delta_mm3": float(round(self.volume_delta_mm3, 2)),
+            "volume_delta_pct": float(round(self.volume_delta_pct, 2)),
+            "surface_area_delta_mm2": float(round(self.surface_area_delta_mm2, 2)),
+            "bbox_size_delta": {k: float(round(v, 2)) for k, v in self.bbox_size_delta.items()},
+            "center_of_mass_delta": [float(round(c, 2)) for c in self.center_of_mass_delta],
         }
 
 
@@ -104,11 +104,11 @@ class AlgorithmicFidelityResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "dimension_match_score": round(self.dimension_match_score, 2),
-            "volume_sanity_score": round(self.volume_sanity_score, 2),
-            "dfm_score": round(self.dfm_score, 2),
-            "overall_score": round(self.overall_score, 2),
-            "dimension_details": {k: round(v, 2) for k, v in self.dimension_details.items()},
+            "dimension_match_score": float(round(self.dimension_match_score, 2)),
+            "volume_sanity_score": float(round(self.volume_sanity_score, 2)),
+            "dfm_score": float(round(self.dfm_score, 2)),
+            "overall_score": float(round(self.overall_score, 2)),
+            "dimension_details": {k: float(round(v, 2)) for k, v in self.dimension_details.items()},
             "notes": self.notes,
         }
 
@@ -125,7 +125,7 @@ class FEAStubResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "risk_level": self.risk_level,
-            "risk_score": round(self.risk_score, 2),
+            "risk_score": float(round(self.risk_score, 2)),
             "thin_section_risk": self.thin_section_risk,
             "aspect_ratio_risk": self.aspect_ratio_risk,
             "notes": self.notes,

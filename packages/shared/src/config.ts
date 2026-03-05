@@ -67,15 +67,15 @@ export interface CompetitivePipelineConfig {
 
 export const DEFAULT_COMPETITIVE_PIPELINE: CompetitivePipelineConfig = {
   enabled: false,
-  supervisor: { model: 'minimax/MiniMax-M2.5' },
-  judge: { model: 'zai/glm-5' },
-  merger: { model: 'minimax/MiniMax-M2.5' },
-  sandboxAssistant: { model: 'xai/grok-4-1-fast-reasoning' },
+  supervisor: { model: 'ollama_chat/qwen3:32b' },
+  judge: { model: 'ollama_chat/glm4:32b' },
+  merger: { model: 'ollama_chat/qwen3:32b' },
+  sandboxAssistant: { model: 'ollama_chat/devstral:24b' },
   proposalAgents: [
-    { model: 'minimax/MiniMax-M2.5' },
-    { model: 'zai/glm-5' },
-    { model: 'dashscope/qwen3-coder-next' },
-    { model: 'xai/grok-4-1-fast-reasoning' },
+    { model: 'ollama_chat/qwen3:32b' },
+    { model: 'ollama_chat/qwen2.5-coder:32b' },
+    { model: 'ollama_chat/devstral:24b' },
+    { model: 'ollama_chat/glm4:32b' },
   ],
   fidelityThreshold: 95,
   maxRefinementLoops: 3,

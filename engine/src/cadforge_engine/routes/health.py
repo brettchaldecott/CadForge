@@ -35,7 +35,7 @@ def _detect_capabilities() -> list[str]:
     except Exception:
         pass
     try:
-        import pyvista  # noqa: F401
+        import pyrender  # noqa: F401
         caps.append("viewer")
     except Exception:
         pass

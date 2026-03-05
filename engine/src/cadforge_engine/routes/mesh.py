@@ -45,6 +45,6 @@ async def preview_endpoint(req: PreviewRequest) -> PreviewResponse:
         show_stl(path, color=req.color, background=req.background)
         return PreviewResponse(success=True, message=f"Opened viewer for {path.name}")
     except ImportError:
-        return PreviewResponse(success=False, error="pyvista not installed")
+        return PreviewResponse(success=False, error="viewer dependencies not installed")
     except Exception as e:
         return PreviewResponse(success=False, error=str(e))

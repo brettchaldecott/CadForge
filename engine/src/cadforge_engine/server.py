@@ -36,8 +36,16 @@ def main() -> None:
     if args.service and host == "127.0.0.1":
         host = "0.0.0.0"
 
-    # Store service config in environment for the factory
+    # Load .env file if present (API keys for LiteLLM providers, etc.)
     import os
+
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass  # python-dotenv not installed — rely on shell environment
+
+    # Store service config in environment for the factory
 
     if args.service:
         os.environ["CADFORGE_SERVICE_MODE"] = "1"
