@@ -756,6 +756,173 @@ class TestVersionHistory:
         assert loaded is not None
         assert len(loaded.version_history) >= 1
 
+
+# ---------------------------------------------------------------------------
+# Refinement mode tests
+# ---------------------------------------------------------------------------
+
+
+class TestRefinementMode:
+    """Test iterative refinement of competitive designs."""
+
+    @pytest.mark.asyncio
+    async def test_refinement_seeds_previous_code(self, tmp_path: Path):
+        """When design has final_code, graph state includes previous_code."""
+        from cadforge_engine.agent.competitive_graph import run_competitive_graph
+
+        store = CompetitiveDesignStore(tmp_path)
+        design = CompetitiveDesignSpec(
+            title="Original Box",
+            prompt="Add a 10mm hole in the center of the top face",
+            specification="A cube measuring 50mm on each side",
+        )
+        # Simulate a completed previous run
+        design.final_code = "result = cq.Workplane().box(50, 50, 50)"
+        design.final_stl_path = "/tmp/prev.stl"
+        design.status = CompetitiveDesignStatus.DRAFT
+        store.save(design)
+
+        captured_supervisor_prompts: list[str] = []
+        captured_coder_prompts: list[str] = []
+
+        async def mock_acall(messages, system, tools):
+            user_content = ""
+            for m in messages:
+                if m.get("role") == "user":
+                    c = m.get("content", "")
+                    if isinstance(c, str):
+                        user_content += c
+
+            if "supervisor" in system.lower():
+                captured_supervisor_prompts.append(user_content)
+                return _mock_llm_response(json.dumps({
+                    "golden_spec": "A 50mm cube with a 10mm hole on top face",
+                    "key_constraints": ["50mm cube", "10mm hole centered on top"],
+                    "critical_dimensions": {"side_length": "50mm", "hole_diameter": "10mm"},
+                    "manufacturing_notes": "Simple geometry",
+                }))
+            if "judge" in system.lower() or "fidelity" in system.lower():
+                return _mock_llm_response(json.dumps({
+                    "score": 97, "text_similarity": 95,
+                    "geometric_accuracy": 98, "manufacturing_viability": 97,
+                    "reasoning": "Excellent refinement",
+                }))
+            if "learner" in system.lower() or "pattern" in system.lower():
+                return _mock_llm_response(json.dumps({
+                    "patterns": [], "anti_patterns": [], "key_insights": [],
+                }))
+            # Coder
+            captured_coder_prompts.append(user_content)
+            return _mock_llm_response(
+                "result = cq.Workplane().box(50,50,50).faces('>Z').hole(10)"
+            )
+
+        config = {
+            "supervisor": {"model": "test/sup"},
+            "judge": {"model": "test/judge"},
+            "merger": {"model": "test/merger"},
+            "proposal_agents": [{"model": "test/a"}],
+            "fidelity_threshold": 95,
+            "debate_enabled": False,
+        }
+
+        events = []
+        with patch(_GRAPH_PATCHES[0]) as MockClient, \
+             patch(_GRAPH_PATCHES[1], side_effect=_noop_evaluate_proposal):
+            mock = MagicMock()
+            mock.model = "test/model"
+            mock.acall = AsyncMock(side_effect=mock_acall)
+            MockClient.return_value = mock
+
+            async for event in run_competitive_graph(
+                design=design, store=store, project_root=tmp_path,
+                pipeline_config=config, max_rounds=1,
+            ):
+                events.append(event)
+
+        # Supervisor should receive REFINEMENT MODE prompt with previous code
+        assert len(captured_supervisor_prompts) >= 1
+        sup_prompt = captured_supervisor_prompts[0]
+        assert "REFINEMENT MODE" in sup_prompt
+        assert "cq.Workplane().box(50, 50, 50)" in sup_prompt
+
+        # Coder should receive previous code in prompt
+        assert len(captured_coder_prompts) >= 1
+        coder_prompt = captured_coder_prompts[0]
+        assert "Previous working code" in coder_prompt
+        assert "cq.Workplane().box(50, 50, 50)" in coder_prompt
+
+    @pytest.mark.asyncio
+    async def test_new_design_has_no_refinement_context(self, tmp_path: Path):
+        """When design has no final_code, is_refinement is False."""
+        from cadforge_engine.agent.competitive_graph import run_competitive_graph
+
+        store = CompetitiveDesignStore(tmp_path)
+        design = CompetitiveDesignSpec(
+            title="New Box",
+            prompt="Create a 50mm cube",
+        )
+        store.save(design)
+
+        captured_supervisor_prompts: list[str] = []
+
+        async def mock_acall(messages, system, tools):
+            user_content = ""
+            for m in messages:
+                if m.get("role") == "user":
+                    c = m.get("content", "")
+                    if isinstance(c, str):
+                        user_content += c
+
+            if "supervisor" in system.lower():
+                captured_supervisor_prompts.append(user_content)
+                return _mock_llm_response(json.dumps({
+                    "golden_spec": "A 50mm cube",
+                    "key_constraints": ["50mm dimensions"],
+                    "critical_dimensions": {"side_length": "50mm"},
+                    "manufacturing_notes": "Simple",
+                }))
+            if "judge" in system.lower() or "fidelity" in system.lower():
+                return _mock_llm_response(json.dumps({
+                    "score": 97, "text_similarity": 95,
+                    "geometric_accuracy": 98, "manufacturing_viability": 97,
+                    "reasoning": "Good",
+                }))
+            if "learner" in system.lower() or "pattern" in system.lower():
+                return _mock_llm_response(json.dumps({
+                    "patterns": [], "anti_patterns": [], "key_insights": [],
+                }))
+            return _mock_llm_response("result = cq.Workplane().box(50,50,50)")
+
+        config = {
+            "supervisor": {"model": "test/sup"},
+            "judge": {"model": "test/judge"},
+            "merger": {"model": "test/merger"},
+            "proposal_agents": [{"model": "test/a"}],
+            "fidelity_threshold": 95,
+            "debate_enabled": False,
+        }
+
+        with patch(_GRAPH_PATCHES[0]) as MockClient, \
+             patch(_GRAPH_PATCHES[1], side_effect=_noop_evaluate_proposal):
+            mock = MagicMock()
+            mock.model = "test/model"
+            mock.acall = AsyncMock(side_effect=mock_acall)
+            MockClient.return_value = mock
+
+            async for _ in run_competitive_graph(
+                design=design, store=store, project_root=tmp_path,
+                pipeline_config=config, max_rounds=1,
+            ):
+                pass
+
+        # Supervisor should NOT receive REFINEMENT MODE prompt
+        assert len(captured_supervisor_prompts) >= 1
+        sup_prompt = captured_supervisor_prompts[0]
+        assert "REFINEMENT MODE" not in sup_prompt
+        assert "Previous working code" not in sup_prompt
+
+
     @pytest.mark.asyncio
     async def test_fidelity_history_accumulates(self, tmp_path: Path):
         """Fidelity score history should have entries from pipeline rounds."""

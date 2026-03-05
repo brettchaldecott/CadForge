@@ -57,6 +57,12 @@ Your output must be valid JSON with these fields:
 
 Be extremely specific about dimensions, positions, features, tolerances.
 Multiple teams will compete to implement this — ambiguity leads to divergent results.
+
+When given a REFINEMENT MODE request, you MUST:
+1. Keep all existing spec requirements that aren't affected by the change
+2. Add/modify only the parts addressed by the change request
+3. Clearly mark which dimensions/features are NEW vs PRESERVED
+4. Update critical_dimensions to include both old and new measurements
 """
 
 CODER_PROPOSAL_PROMPT = """\
@@ -323,11 +329,13 @@ def _evaluate_proposal(
             try:
                 from cadforge_engine.domain.analyzer import analyze_mesh, run_dfm_check
                 analysis = analyze_mesh(output_path)
-                eval_result.is_watertight = analysis.is_watertight
-                eval_result.volume_mm3 = analysis.volume_mm3
-                eval_result.surface_area_mm2 = analysis.surface_area_mm2
-                eval_result.bounding_box = analysis.bounding_box
-                eval_result.center_of_mass = analysis.center_of_mass
+                eval_result.is_watertight = bool(analysis.is_watertight)
+                eval_result.volume_mm3 = float(analysis.volume_mm3)
+                eval_result.surface_area_mm2 = float(analysis.surface_area_mm2)
+                eval_result.bounding_box = {
+                    k: float(v) for k, v in analysis.bounding_box.items()
+                }
+                eval_result.center_of_mass = [float(v) for v in analysis.center_of_mass]
 
                 dfm = run_dfm_check(output_path)
                 eval_result.dfm_issues = dfm.issues

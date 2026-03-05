@@ -76,6 +76,11 @@ class CompetitivePipelineState(TypedDict, total=False):
     fidelity_threshold: float
     debate_enabled: bool
 
+    # Refinement context (set when refining an existing design)
+    previous_code: str
+    change_request: str
+    is_refinement: bool
+
     # SSE events to emit (append-only via reducer)
     sse_events: Annotated[list[dict], operator.add]
 
@@ -152,15 +157,26 @@ def load_kb(state: CompetitivePipelineState) -> dict:
 async def supervisor(state: CompetitivePipelineState) -> dict:
     """Parse prompt into golden spec + key constraints."""
     config = state["pipeline_config"]
-    supervisor_model = config.get("supervisor", {}).get("model", "minimax/MiniMax-M2.5")
+    supervisor_model = config.get("supervisor", {}).get("model", "ollama_chat/qwen3:32b")
     client = LiteLLMSubagentClient(model=supervisor_model)
 
-    supervisor_prompt = f"User request: {state['prompt']}"
+    if state.get("is_refinement") and state.get("previous_code"):
+        supervisor_prompt = (
+            f"REFINEMENT MODE — amend the existing specification.\n\n"
+            f"Existing golden spec:\n{state.get('golden_spec', state.get('specification', ''))}\n\n"
+            f"Existing code:\n```python\n{state['previous_code']}\n```\n\n"
+            f"Change request: {state['prompt']}\n\n"
+            f"Produce an AMENDED specification that incorporates the change request "
+            f"while preserving all existing features not affected by the change."
+        )
+    else:
+        supervisor_prompt = f"User request: {state['prompt']}"
+
     kb_context = state.get("kb_context", "")
     if kb_context:
         supervisor_prompt += f"\n\nRelevant knowledge base context:\n{kb_context}"
     spec = state.get("specification", "")
-    if spec:
+    if spec and not state.get("is_refinement"):
         supervisor_prompt += f"\n\nExisting specification draft:\n{spec}"
 
     response = await client.acall(
@@ -236,6 +252,16 @@ async def proposal_worker(state: CompetitivePipelineState) -> dict:
     kb = state.get("kb_context", "")
     if kb:
         coder_prompt += f"\n\nRelevant vault patterns:\n{kb}"
+
+    # Refinement: give coders the previous code to modify
+    previous_code = state.get("previous_code", "")
+    if previous_code:
+        coder_prompt += (
+            f"\n\nPrevious working code (modify this, don't start from scratch):\n"
+            f"```python\n{previous_code}\n```\n\n"
+            f"Change request: {state.get('change_request', state['prompt'])}\n"
+            f"Apply ONLY the requested changes. Preserve all other features."
+        )
 
     proposal = Proposal(model=model)
 
@@ -345,7 +371,7 @@ def fan_out_critiques(state: CompetitivePipelineState) -> list[Send]:
                 }))
 
     # Also include the judge as a dedicated critic
-    judge_model = config.get("judge", {}).get("model", "zai/glm-5")
+    judge_model = config.get("judge", {}).get("model", "ollama_chat/glm4:32b")
     for target in valid:
         sends.append(Send("critique_worker", {
             **state, "_critic_model": judge_model, "_target": target,
@@ -416,7 +442,7 @@ def fan_out_fidelity(state: CompetitivePipelineState) -> list[Send]:
 async def fidelity_worker(state: CompetitivePipelineState) -> dict:
     """Score a single proposal for fidelity to specification."""
     config = state["pipeline_config"]
-    judge_model = config.get("judge", {}).get("model", "zai/glm-5")
+    judge_model = config.get("judge", {}).get("model", "ollama_chat/glm4:32b")
     client = LiteLLMSubagentClient(model=judge_model)
 
     target_dict = state["_target_proposal"]
@@ -468,7 +494,7 @@ def collect_fidelity(state: CompetitivePipelineState) -> dict:
 async def merger_selector(state: CompetitivePipelineState) -> dict:
     """Pick winner, merge, or trigger revert for next round."""
     config = state["pipeline_config"]
-    merger_model = config.get("merger", {}).get("model", "minimax/MiniMax-M2.5")
+    merger_model = config.get("merger", {}).get("model", "ollama_chat/qwen3:32b")
     threshold = state.get("fidelity_threshold", 95.0)
     proposals = state.get("proposals", [])
 
@@ -675,7 +701,7 @@ def human_approval(state: CompetitivePipelineState) -> dict:
 async def learner(state: CompetitivePipelineState) -> dict:
     """Extract patterns from winning/losing proposals."""
     config = state["pipeline_config"]
-    supervisor_model = config.get("supervisor", {}).get("model", "minimax/MiniMax-M2.5")
+    supervisor_model = config.get("supervisor", {}).get("model", "ollama_chat/qwen3:32b")
     client = LiteLLMSubagentClient(model=supervisor_model)
 
     events: list[dict] = [{"event": "competitive_learning", "data": {"status": "running"}}]
@@ -935,6 +961,8 @@ async def run_competitive_graph(
     """
     graph = build_competitive_graph(checkpointer=checkpointer)
 
+    is_refinement = bool(design.final_code)
+
     initial_state: CompetitivePipelineState = {
         "design_id": design.id,
         "prompt": design.prompt,
@@ -944,10 +972,14 @@ async def run_competitive_graph(
         "max_rounds": max_rounds,
         "fidelity_threshold": pipeline_config.get("fidelity_threshold", 95.0),
         "debate_enabled": pipeline_config.get("debate_enabled", True),
+        # Refinement context
+        "previous_code": design.final_code or "",
+        "change_request": design.prompt if is_refinement else "",
+        "is_refinement": is_refinement,
         "sse_events": [],
-        "golden_spec": "",
+        "golden_spec": design.specification if is_refinement else "",
         "key_constraints": [],
-        "constraints": {},
+        "constraints": design.constraints if is_refinement else {},
         "kb_context": "",
         "current_round": 0,
         "proposals": [],
@@ -957,7 +989,7 @@ async def run_competitive_graph(
         "_fidelity_results": [],
         "fidelity_scores": [],
         "accumulated_feedback": [],
-        "previous_stl": "",
+        "previous_stl": design.final_stl_path or "",
         "winner_code": "",
         "winner_id": "",
         "winner_model": "",

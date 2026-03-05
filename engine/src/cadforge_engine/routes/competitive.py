@@ -28,9 +28,10 @@ router = APIRouter(prefix="/competitive", tags=["competitive"])
 
 class CreateCompetitiveRequest(BaseModel):
     """Create and start a competitive pipeline."""
-    prompt: str = Field(..., description="User's design request")
+    prompt: str = Field(..., description="User's design request or change request")
     project_root: str = Field(..., description="Project root directory")
     specification: str = Field(default="", description="Optional pre-written spec")
+    design_id: str | None = Field(default=None, description="Existing design to refine")
     constraints: dict[str, Any] = Field(default_factory=dict)
     pipeline_config: CompetitivePipelineConfig = Field(default_factory=CompetitivePipelineConfig)
     max_rounds: int = Field(default=3, ge=1, le=10)
@@ -59,15 +60,25 @@ def _sse_event(event_type: str, data: dict[str, Any]) -> str:
 
 @router.post("")
 async def create_competitive(req: CreateCompetitiveRequest) -> StreamingResponse:
-    """Create a new competitive design and start the pipeline (SSE stream)."""
+    """Create a new competitive design or refine an existing one (SSE stream)."""
     store = _get_store(req.project_root)
-    design = CompetitiveDesignSpec(
-        title=req.prompt[:80],
-        prompt=req.prompt,
-        specification=req.specification,
-        constraints=req.constraints,
-        pipeline_config=req.pipeline_config.model_dump(),
-    )
+
+    if req.design_id:
+        # Refinement mode — load existing design
+        design = store.get(req.design_id)
+        if not design:
+            raise HTTPException(status_code=404, detail=f"Design {req.design_id} not found")
+        design.prompt = req.prompt
+        design.status = CompetitiveDesignStatus.DRAFT
+    else:
+        design = CompetitiveDesignSpec(
+            title=req.prompt[:80],
+            prompt=req.prompt,
+            specification=req.specification,
+            constraints=req.constraints,
+            pipeline_config=req.pipeline_config.model_dump(),
+        )
+
     store.save(design)
 
     async def event_generator():

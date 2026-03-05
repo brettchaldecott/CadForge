@@ -476,7 +476,9 @@ export class BackendClient {
     req: CompetitivePipelineRequest,
     onSSEEvent: (event: SSEEvent) => void,
   ): Promise<{ success: boolean; output: string; error?: string }> {
-    const url = `${this.baseUrl}/competitive`;
+    const url = req.design_id
+      ? `${this.baseUrl}/competitive/${req.design_id}/execute`
+      : `${this.baseUrl}/competitive`;
     return this._streamSSE(url, req, onSSEEvent);
   }
 

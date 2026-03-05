@@ -234,11 +234,13 @@ export async function handleTask(
     }
 
     const pipelineConfig = deps.settings.competitivePipeline ?? {};
+    const designId = input.design_id as string | undefined;
 
     const req: CompetitivePipelineRequest = {
       prompt,
       project_root: deps.projectRoot,
       specification: context || undefined,
+      design_id: designId,
       pipeline_config: pipelineConfig as unknown as Record<string, unknown>,
     };
 

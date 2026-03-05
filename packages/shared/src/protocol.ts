@@ -283,6 +283,7 @@ export interface CompetitivePipelineRequest {
   prompt: string;
   project_root: string;
   specification?: string;
+  design_id?: string;
   constraints?: Record<string, unknown>;
   pipeline_config?: Record<string, unknown>;
   max_rounds?: number;
