@@ -769,6 +769,7 @@ def kb_indexer(state: CompetitivePipelineState) -> dict:
             events.append({"event": "competitive_learning", "data": {
                 "indexed": True, "chunk_count": len(chunks),
             }})
+            return {"sse_events": events, "learnings_indexed": True}
     except Exception as e:
         logger.warning("KB indexing failed: %s", e)
 
@@ -1040,5 +1041,8 @@ async def run_competitive_graph(
 
             if "fidelity_score_history" in node_output:
                 design.fidelity_score_history.extend(node_output["fidelity_score_history"])
+
+            if node_output.get("learnings_indexed"):
+                design.learnings_indexed = True
 
             store.save(design)

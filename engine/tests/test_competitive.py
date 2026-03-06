@@ -976,3 +976,77 @@ class TestRefinementMode:
         assert loaded is not None
         assert len(loaded.fidelity_score_history) >= 1
         assert loaded.fidelity_score_history[0]["round"] == 1
+
+
+# ---------------------------------------------------------------------------
+# KB indexer learnings_indexed flag tests
+# ---------------------------------------------------------------------------
+
+
+class TestKbIndexerFlag:
+    def test_kb_indexer_sets_flag(self, tmp_path: Path):
+        """kb_indexer() should return learnings_indexed=True when chunks are indexed."""
+        from cadforge_engine.agent.competitive_graph import kb_indexer
+
+        state = {
+            "design_id": "test-123",
+            "prompt": "Make a 50mm cube",
+            "specification": "A cube measuring 50mm on each side",
+            "golden_spec": "A cube measuring 50mm on each side",
+            "project_root": str(tmp_path),
+            "current_round": 1,
+            "winner_code": "result = cq.Workplane().box(50, 50, 50)",
+            "previous_stl": "",
+        }
+
+        fake_chunks = [{"text": "learned something", "metadata": {}}]
+
+        with patch("cadforge_engine.vault.learnings.extract_learnings", return_value=fake_chunks) as mock_extract, \
+             patch("cadforge_engine.vault.indexer.index_chunks") as mock_index:
+            result = kb_indexer(state)
+
+        assert result.get("learnings_indexed") is True
+        assert any(e["event"] == "competitive_learning" for e in result["sse_events"])
+        mock_extract.assert_called_once()
+        mock_index.assert_called_once()
+
+    def test_kb_indexer_no_flag_on_empty_chunks(self, tmp_path: Path):
+        """kb_indexer() should NOT set learnings_indexed when no chunks extracted."""
+        from cadforge_engine.agent.competitive_graph import kb_indexer
+
+        state = {
+            "design_id": "test-456",
+            "prompt": "Make a box",
+            "specification": "",
+            "golden_spec": "",
+            "project_root": str(tmp_path),
+            "current_round": 1,
+            "winner_code": "",
+            "previous_stl": "",
+        }
+
+        with patch("cadforge_engine.vault.learnings.extract_learnings", return_value=[]), \
+             patch("cadforge_engine.vault.indexer.index_chunks"):
+            result = kb_indexer(state)
+
+        assert "learnings_indexed" not in result
+
+    def test_kb_indexer_no_flag_on_exception(self, tmp_path: Path):
+        """kb_indexer() should NOT set learnings_indexed when an exception occurs."""
+        from cadforge_engine.agent.competitive_graph import kb_indexer
+
+        state = {
+            "design_id": "test-789",
+            "prompt": "Make a box",
+            "specification": "",
+            "golden_spec": "",
+            "project_root": str(tmp_path),
+            "current_round": 1,
+            "winner_code": "result = Box(50,50,50)",
+            "previous_stl": "",
+        }
+
+        with patch("cadforge_engine.vault.learnings.extract_learnings", side_effect=RuntimeError("boom")):
+            result = kb_indexer(state)
+
+        assert "learnings_indexed" not in result
